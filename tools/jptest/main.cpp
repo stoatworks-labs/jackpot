@@ -1083,6 +1083,7 @@ int runSlotsReadback( const Perturb& perturb )
 			win.height = rig.height;
 			int read = 0, wrong = 0;
 			double worstMargin = 1e9;
+			std::string worstPair;
 			const Result kinds[] = { Result::Random, Result::Jackpot, Result::NearMiss, Result::Win, Result::Lose, Result::Fixed };
 			for( int k = 0; k < 12; ++k )
 			{
@@ -1096,32 +1097,87 @@ int runSlotsReadback( const Perturb& perturb )
 				const SymbolAtlas& atlas = rig.plugin.CurrentSymbols();
 				for( int i = 0; i < reels; ++i )
 				{
-					//The payline row and the rows a third of a stop either side,
-					//across the middle of the reel.
-					std::vector< double > err( slots::kSymbolCount - 1, 0.0 );
-					for( double ly : { -0.12, 0.0, 0.12 } )
+					//Rows across the symbol on the line (a third of a stop either
+					//side of the payline, where the drum puts it) and columns across
+					//the middle of the reel: each sample's colour, and every
+					//candidate symbol's reference there (a strip of that symbol
+					//alone, read at stop 0).
+					const int candidates = slots::kSymbolCount - 1;
+					std::vector< std::array< double, 3 > > seen;
+					std::vector< std::vector< std::array< double, 3 > > > refs( static_cast< size_t >( candidates ) );
+					const double pitch = 2.0 * kPi / slots::kStops;
+					for( double f : { -0.32, -0.16, 0.0, 0.16, 0.32 } )
 						for( double lx = -0.6; lx <= 0.6; lx += 0.1 )
 						{
+							const double ly = std::sin( f * pitch ) / std::sin( 1.5 * pitch );
 							int px = 0, py = 0;
 							win.Pixel( i, lx, ly, px, py );
 							const float* o = &img[ ( static_cast< size_t >( py ) * rig.width + px ) * 4 ];
+							seen.push_back( { o[ 0 ], o[ 1 ], o[ 2 ] } );
 							double du = 0.0, tx = 0.0;
 							win.Drum( lx, ly, du, tx );
-							for( int sym = 0; sym < slots::kSymbolCount - 1; ++sym )
+							for( int sym = 0; sym < candidates; ++sym )
 							{
-								//A strip made of this symbol alone, read at stop 0.
 								slots::Reel only;
 								only.symbol.fill( sym );
-								double want[ 3 ];
-								reelColour( atlas, only, 0.0, 0.0, 1, du, tx, want );
-								for( int c = 0; c < 3; ++c )
-									err[ static_cast< size_t >( sym ) ] += std::fabs( o[ c ] - want[ c ] );
+								std::array< double, 3 > want {};
+								reelColour( atlas, only, 0.0, 0.0, 1, du, tx, want.data() );
+								refs[ static_cast< size_t >( sym ) ].push_back( want );
 							}
 						}
-					const int best = static_cast< int >( std::min_element( err.begin(), err.end() ) - err.begin() );
-					std::vector< double > sorted = err;
-					std::sort( sorted.begin(), sorted.end() );
-					worstMargin = std::min( worstMargin, sorted[ 1 ] / std::max( sorted[ 0 ], 1e-9 ) );
+					//Pairwise, as polyhedral reads a number: two candidates are judged
+					//only where their references disagree by more than 0.1 (the
+					//paper both leave blank says nothing), and the symbol read is the
+					//one that beats every other. The reference reads the atlas's top
+					//level and the shader its mip chain, so each is a little off
+					//everywhere; where two symbols differ, the right one is far less.
+					auto duel = [ & ]( int a, int b, double& ea, double& eb ) {
+						ea = eb = 0.0;
+						for( size_t k = 0; k < seen.size(); ++k )
+						{
+							const auto& ra = refs[ static_cast< size_t >( a ) ][ k ];
+							const auto& rb = refs[ static_cast< size_t >( b ) ][ k ];
+							double apart = 0.0;
+							for( int c = 0; c < 3; ++c )
+								apart = std::max( apart, std::fabs( ra[ c ] - rb[ c ] ) );
+							if( apart <= 0.1 )
+								continue;
+							for( int c = 0; c < 3; ++c )
+							{
+								ea += std::fabs( seen[ k ][ c ] - ra[ c ] );
+								eb += std::fabs( seen[ k ][ c ] - rb[ c ] );
+							}
+						}
+					};
+					int best = -1;
+					for( int a = 0; a < candidates && best < 0; ++a )
+					{
+						bool beatsAll = true;
+						for( int b = 0; b < candidates && beatsAll; ++b )
+						{
+							if( a == b )
+								continue;
+							double ea = 0.0, eb = 0.0;
+							duel( a, b, ea, eb );
+							beatsAll = ea < eb;
+						}
+						if( beatsAll )
+							best = a;
+					}
+					if( best >= 0 )
+						for( int b = 0; b < candidates; ++b )
+						{
+							if( b == best )
+								continue;
+							double ea = 0.0, eb = 0.0;
+							duel( best, b, ea, eb );
+							const double margin = eb / std::max( ea, 1e-9 );
+							if( margin < worstMargin )
+							{
+								worstMargin = margin;
+								worstPair   = fmt( "%s over %s by %.1fx", slots::SymbolName( best ), slots::SymbolName( b ), margin );
+							}
+						}
 					const int expected = slots::Reels( SymbolSet::Fruit )[ static_cast< size_t >( i ) ].symbol[ static_cast< size_t >( plan.stops[ static_cast< size_t >( i ) ] ) ];
 					++read;
 					if( best != expected )
@@ -1132,7 +1188,7 @@ int runSlotsReadback( const Perturb& perturb )
 					}
 				}
 			}
-			Check( wrong == 0, fmt( "%dx%d, %d reels: %d payline symbols read, %d wrong (the runner-up at least %.1fx further off)", rig.width, rig.height, reels, read, wrong, worstMargin ) );
+			Check( wrong == 0, fmt( "%dx%d, %d reels: %d payline symbols read, %d wrong (closest call: %s)", rig.width, rig.height, reels, read, wrong, worstPair.c_str() ) );
 		}
 	return Verdict();
 }
@@ -2057,7 +2113,7 @@ int runWheelReadback( const Perturb& perturb )
 //===========================================================================
 int runOver( const Perturb& )
 {
-	std::printf( "\n=== over: the clip untouched where there is no game, Mix 0 the clip everywhere, the clip's alpha kept\n" );
+	std::printf( "\n=== over: the clip (premultiplied) untouched where there is no game, Mix 0 the clip everywhere, its alpha kept\n" );
 	for( const auto& size : { std::pair< int, int > { 640, 360 }, std::pair< int, int > { 320, 180 } } )
 	{
 		//A card with alpha: the left third transparent, the middle half-clear.

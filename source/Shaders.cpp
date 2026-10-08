@@ -258,6 +258,7 @@ const char* const kText = R"(
 const float SPREAD = 12.0;  //px, the atlas's distance range either side of an edge
 const float ONEDGE = 128.0; //the byte on the outline
 const int MAX_SPANS = 24;
+const float SPACE  = 0.5;   //H units: a space's advance (= kSpace, Jackpot.cpp)
 const int MAX_CHARS = 192;
 
 uniform sampler2D Atlas;
@@ -300,7 +301,7 @@ float textDistance( int span, vec2 p, float h )
 		int g = Chars[ s.x + i ];
 		if( g < 0 )
 		{
-			pen += 0.35;
+			pen += SPACE;
 			continue;
 		}
 		float x = local.x - pen;

@@ -34,6 +34,7 @@ constexpr int kClockVotes       = 4;
 constexpr double kMaxFrameDelta = 0.25;///< host seconds; a bigger step is a jump
 constexpr double kBannerFor     = 3.5; ///< seconds a win's banner stays up
 constexpr double kCountUp       = 1.6; ///< seconds the win meter takes to count
+constexpr float kSpace          = 0.5f;///< a space's advance in H, = SPACE in Shaders.cpp (0.35 ran "31 6" together)
 constexpr int kBallSlots        = 192; ///< columns of the lottery's ball texture: this draw's, and the last's draining
 
 const char* const kGameNames[]     = { "Slots", "Roulette", "Money Wheel", "Craps", "Lottery", "Shower Only" };
@@ -944,7 +945,7 @@ void JackpotPlugin::SetTextUniforms( FFGLShader& shader, std::vector< std::strin
 				pen += atlas.glyph[ g ].advance;
 			}
 			else
-				pen += 0.35f;
+				pen += kSpace;
 		}
 		ink.push_back( hi > lo ? lo : 0.0f );
 		ink.push_back( hi > lo ? hi - lo : 0.0f );
