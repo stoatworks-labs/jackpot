@@ -216,6 +216,12 @@ both, and the reference reads the atlas's top level where the shader samples its
 chain. Judged pairwise on the pixels where two symbols' references disagree (as
 polyhedral reads a number), the closest call is 1.3×.
 
+**A second pull jumped the reels back.** The slot request always started from the
+stops the last play rested on, so Play pressed while the reels still ran snapped them
+back a lap or more. Every other game already carried on from its current state. The
+request now starts a mid-spin pull from the reels' current positions, and `--state`
+holds a frame's movement across the press under one stop.
+
 **The rest, briefly.** `GLState`'s restore only re-enabled the depth test, never
 disabled it, and the shower turns it on. The lip's constant was read from the shader
 text at the first `vec2( LIP, `, which is the track's end; it is `LIP_TOP` now. A

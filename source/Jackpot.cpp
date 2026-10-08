@@ -444,6 +444,11 @@ slots::Request JackpotPlugin::SlotsRequest() const
 	r.duration = PlayDuration();
 	r.damping  = ReelDampingFromParam( params[ PT_REEL_BOUNCE ] );
 	r.from     = reelStops;
+	//A pull while the reels still run starts from where they are, not from
+	//where the last play left them (which jumped the reels back).
+	if( play.game == Game::Slots && !play.slots.idle && clock - playStart < play.slots.playback.duration )
+		for( int i = 0; i < slots::kMaxReels; ++i )
+			r.from[ static_cast< size_t >( i ) ] = play.slots.Position( i, clock - playStart );
 	r.uniformVirtual = flags.uniformVirtual;
 	return r;
 }

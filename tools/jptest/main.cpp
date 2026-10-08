@@ -2239,6 +2239,24 @@ int runState( const Perturb& )
 	rig.PlayToRest();
 	Check( rig.plugin.Credits() == credits - 1 + 200, fmt( "a jackpot on three reels: credits %d -> %d (a credit to play, 200 paid)", credits, rig.plugin.Credits() ) );
 
+	//A pull while the reels run: they carry on from where they are. (Started
+	//from the last rest instead, they jumped back a lap or more.)
+	{
+		rig.Set( PT_RESULT, static_cast< float >( Result::Random ) );
+		rig.Press( PT_PLAY );
+		rig.Render( 60 );
+		double before[ 3 ];
+		for( int i = 0; i < 3; ++i )
+			before[ i ] = rig.plugin.CurrentPlay().slots.Position( i, rig.plugin.PlaybackSeconds() );
+		rig.Press( PT_PLAY );
+		rig.Render( 1 );
+		double worst = 0.0;
+		for( int i = 0; i < 3; ++i )
+			worst = std::max( worst, std::fabs( rig.plugin.CurrentPlay().slots.Position( i, rig.plugin.PlaybackSeconds() ) - before[ i ] ) );
+		//A frame at the fastest a reel runs (about 60 stops a second) is one stop.
+		Check( worst < 1.0, fmt( "slots: Play again mid-spin, no reel moved more than %.2f stops in the frame (a frame's run is under 1)", worst ) );
+	}
+
 	setGame( rig, Game::Craps );
 	rig.Set( PT_RESULT, static_cast< float >( Result::Fixed ) );
 	rig.Set( PT_FIXED_NUMBER, 6.0f );

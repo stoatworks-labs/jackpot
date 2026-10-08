@@ -129,7 +129,8 @@ composition restores both.
 
 ## Status
 
-**v0.1.0, unreleased, 2026-10-08.** No user guide yet.
+**v0.1.0, 2026-10-09, and honestly early.** User guide:
+[stoatworks-labs.com/software/jackpot/guide](https://stoatworks-labs.com/software/jackpot/guide/).
 
 **In Resolume Arena 7.27.1 on macOS** (this Mac, Apple M4 Max, 2026-10-09): Arena's log
 registers `'SW Jackpot' uid: JP01 category: 3` and `'SW Jackpot Over' uid: JP02
@@ -159,7 +160,7 @@ What is measured, on this machine:
 | shower | a coin falling face on for 1.5 s within 0.009 of the closed form under quadratic drag (bound 0.019, g T dt); a tumbling chip keeps its angular momentum to 0.48% while its axis wobbles; 1.1 million contact steps, none added energy; 277 pieces at rest, all flat; **Euler's disk**: the contact's rate within 6% of Ω² = 4 g / (r sin α) from 7° to 1.3° of lean, rising 2.5× |
 | duration | every game, Spin Time 3, 6 and 12 s: at rest at Spin Time, moving a frame before, still after; Land On, 64 waits each ending on a beat or bar boundary |
 | Over | the clip (premultiplied, alpha and all) untouched where there is no game and everywhere at Mix 0, to 1.2×10⁻⁷ |
-| the rest | defaults, names (unique as Arena addresses them, no '/'), determinism (the same seed is the same play to the bit), resize mid-shower, fonts by name, missing and by file, credits and the craps point carried between plays, the roulette ring never jumping at a Play |
+| the rest | defaults, names (unique as Arena addresses them, no '/'), determinism (the same seed is the same play to the bit), resize mid-shower, fonts by name, missing and by file, credits and the craps point carried between plays, the roulette ring never jumping at a Play, and a slot pull mid-spin carrying the reels on from where they are |
 | tables | the dice's face loops, groups and labels identical from arm64 with fused multiply-adds, arm64 without, and x86_64 (polyhedral's check) |
 | negative controls | **21** deliberately wrong models, **all 21** detected |
 | mutants | **10** one-character changes (three GLSL, seven C++), **all 10** caught |
