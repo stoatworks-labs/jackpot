@@ -235,8 +235,11 @@ vec4 finish( vec4 game )
 {
 	if( IsEffect == 1 )
 	{
+		//The clip arrives premultiplied (Resolume's DXV clips with alpha have
+		//rgb <= a on 99.6% of pixels -- colourunder measured it), so it is
+		//un-premultiplied before it is taken to linear.
 		vec4 clip     = texture( Clip, uv * ClipScale );
-		vec3 clipLin  = toLinear( clip.rgb );
+		vec3 clipLin  = toLinear( clip.a > 0.0 ? clip.rgb / clip.a : vec3( 0.0 ) );
 		vec4 under    = vec4( clipLin * clip.a, clip.a );
 		vec4 composed = over( game, under );
 		vec4 mixed    = mix( under, composed, Mix );
@@ -328,6 +331,32 @@ float stackedDistance( int span, vec2 p, float h, float lead )
 		best     = max( best, glyphDistance( g, q ) * h );
 	}
 	return best;
+}
+
+//-- the result board: the play's result in words, over the top of the frame ----
+uniform int   ResultSpan;    //the span holding the words, -1 none
+uniform float ResultAmount;  //0..1
+uniform int   ResultTone;    //0 plain, 1 a win, 2 the top prize
+
+//In frame units (the frame's height is 1, whatever Zoom is), so the board
+//stays where it is when the game is framed closer.
+vec4 resultBoard( vec4 col )
+{
+	if( ResultSpan < 0 || ResultAmount <= 0.0 )
+		return col;
+	vec2 q    = ( gl_FragCoord.xy - 0.5 * Resolution ) / Resolution.y - vec2( 0.0, 0.405 );
+	float px  = 1.0 / Resolution.y;
+	float h   = 0.058;
+	float w   = 0.5 * SpanInk[ ResultSpan ].y * h + 0.045;
+	float box = sdBox( q, vec2( w, 0.052 ), 0.026 );
+	if( box > 4.0 * px )
+		return col;
+	vec3 back = ResultTone == 2 ? toLinear( vec3( 0.72, 0.04, 0.07 ) ) : ResultTone == 1 ? toLinear( vec3( 0.05, 0.07, 0.33 ) ) : vec3( 0.006 );
+	col = layer( col, back, cover( box, px ) * 0.92 * ResultAmount );
+	col = layer( col, toLinear( vec3( 1.0, 0.82, 0.25 ) ), cover( abs( box ) - 0.0025, px ) * ResultAmount );
+	float word = textDistance( ResultSpan, q, h );
+	col = layer( col, toLinear( vec3( 1.0, 0.94, 0.62 ) ), cover( -word, px ) * ResultAmount );
+	return col;
 }
 
 //A whole number centred on the origin, `h` tall (digits only, up to 4).
@@ -428,7 +457,8 @@ vec4 symbolTexel( int s, vec2 t, float lod )
 		if( max( c.x, c.y ) > 0.82 )
 			return vec4( toLinear( vec3( 1.0, 0.82, 0.23 ) ), 1.0 );
 		vec4 clip = texture( Clip, ( ( t - 0.5 ) / 0.82 * 0.5 + 0.5 ) * ClipScale );
-		return vec4( toLinear( clip.rgb ), 1.0 );
+		vec3 straight = clip.a > 0.0 ? clip.rgb / clip.a : vec3( 0.0 );
+		return vec4( toLinear( straight ) * clip.a, clip.a );
 	}
 	vec2 cell = vec2( float( s % 4 ), float( s / 4 ) );
 	vec2 a    = ( cell + clamp( t, 0.004, 0.996 ) ) / 4.0;
@@ -909,6 +939,7 @@ const float APRON_Z    = 0.00575;   //0.25 * ( ROTOR_OUT - POCKET_OUT )
 const float STATOR_Z   = 0.034868;  //+ tan 20 * ( TRACK_IN - ROTOR_OUT )
 const float TRACK_Z    = 0.049828;  //+ tan 14 * ( LIP - TRACK_IN )
 const float TABLE_Z    = -0.06;
+const float LIP_TOP    = 0.08;      //the lip as drawn
 const int NV = 15;
 
 uniform float RingAngle;     //the numbered ring (and the frets), rad
@@ -923,7 +954,7 @@ vec2 profileVertex( int i )
 	vec2 v[ NV ] = vec2[ NV ]( vec2( 0.0, 0.045 ), vec2( 0.120, 0.0249 ), vec2( POCKET_IN - STEP_W, 0.0 ),
 	                           vec2( POCKET_IN, -POCKET_D ), vec2( POCKET_OUT - STEP_W, -POCKET_D ), vec2( POCKET_OUT, 0.0 ),
 	                           vec2( ROTOR_OUT, APRON_Z ), vec2( TRACK_IN, STATOR_Z ), vec2( LIP, TRACK_Z ),
-	                           vec2( LIP, 0.08 ), vec2( 0.43, 0.08 ), vec2( 0.445, 0.074 ), vec2( 0.455, 0.055 ),
+	                           vec2( LIP, LIP_TOP ), vec2( 0.43, LIP_TOP ), vec2( 0.445, 0.074 ), vec2( 0.455, 0.055 ),
 	                           vec2( 0.46, 0.035 ), vec2( 0.46, TABLE_Z ) );
 	return v[ i ];
 }
@@ -1300,7 +1331,7 @@ void main()
 		fragColour = game;
 		return;
 	}
-	fragColour = finish( over( game, backdrop( p ) ) );
+	fragColour = finish( resultBoard( over( game, backdrop( p ) ) ) );
 }
 )";
 
@@ -1499,7 +1530,7 @@ void main()
 		fragColour = col;
 		return;
 	}
-	fragColour = finish( over( col, backdrop( p ) ) );
+	fragColour = finish( resultBoard( over( col, backdrop( p ) ) ) );
 }
 )";
 
@@ -1837,7 +1868,7 @@ void main()
 	vec4 sum = vec4( 0.0 );
 	for( int i = 0; i < n; ++i )
 		sum += shadeCraps( CamPos, cameraRay( gl_FragCoord.xy + sampleOffset( i ) ) );
-	fragColour = finish( over( sum / float( n ), backdrop( p ) ) );
+	fragColour = finish( resultBoard( over( sum / float( n ), backdrop( p ) ) ) );
 }
 )";
 
@@ -2088,7 +2119,7 @@ void main()
 	vec4 sum = vec4( 0.0 );
 	for( int i = 0; i < n; ++i )
 		sum += shadeLottery( CamPos, cameraRay( gl_FragCoord.xy + sampleOffset( i ) ), nearCount, nearList );
-	fragColour = finish( over( sum / float( n ), backdrop( p ) ) );
+	fragColour = finish( resultBoard( over( sum / float( n ), backdrop( p ) ) ) );
 }
 )";
 

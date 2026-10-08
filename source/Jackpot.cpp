@@ -469,8 +469,9 @@ roulette::Request JackpotPlugin::RouletteRequest() const
 		r.paintNow      = rotorAngle;
 		r.paintSpeedNow = rotorSpeed;
 	}
-	r.noShift = flags.noShift;
-	r.noWarp  = flags.noWarp;
+	r.noShift    = flags.noShift;
+	r.noWarp     = flags.noWarp;
+	r.biasedDraw = flags.biasedDraw;
 	return r;
 }
 
@@ -889,7 +890,7 @@ void JackpotPlugin::SetCommonUniforms( FFGLShader& shader, int width, int height
 	shader.Set( "LightAngle", static_cast< float >( LightAngleFromParam( params[ PT_LIGHT_ANGLE ] ) * kPi / 180.0 ) );
 	shader.Set( "IsEffect", isEffect ? 1 : 0 );
 	shader.Set( "Mix", std::clamp( params[ PT_MIX ], 0.0f, 1.0f ) );
-	shader.Set( "TestFlat", flat ? 1 : 0 );
+	shader.Set( "TestFlat", flat );
 	if( input != nullptr )
 	{
 		const FFGLTexCoords maxCoords = GetMaxGLTexCoords( *input );
@@ -901,8 +902,29 @@ void JackpotPlugin::SetCommonUniforms( FFGLShader& shader, int width, int height
 	shader.Set( "Atlas", 1 );
 }
 
-void JackpotPlugin::SetTextUniforms( FFGLShader& shader, const std::vector< std::string >& spans )
+/// The game's own spans, and after them the result board's words: shown at
+/// rest after a play with Display on, faded in over a third of a second.
+void JackpotPlugin::SetTextUniforms( FFGLShader& shader, std::vector< std::string > spans )
 {
+	int resultSpan  = -1;
+	float amount    = 0.0f;
+	int tone        = 0;
+	const Game game = play.game;
+	if( game != Game::Slots && game != Game::ShowerOnly && !play.Idle() && params[ PT_DISPLAY ] > 0.5f )
+	{
+		const double since = clock - playStart - play.Clock().duration;
+		if( since >= 0.0 && !play.Result().text.empty() )
+		{
+			resultSpan = static_cast< int >( spans.size() );
+			spans.push_back( play.Result().text );
+			amount = static_cast< float >( Smooth( since / 0.33 ) );
+			tone   = play.Result().jackpot ? 2 : play.Result().win ? 1 : 0;
+		}
+	}
+	shader.Set( "ResultSpan", resultSpan );
+	shader.Set( "ResultAmount", amount );
+	shader.Set( "ResultTone", tone );
+
 	std::vector< GLint > chars;
 	std::vector< GLint > span;
 	std::vector< float > ink;
@@ -959,7 +981,7 @@ void JackpotPlugin::DrawSlots( FFGLShader& shader, double t )
 	float a[ 5 ], b[ 5 ];
 	for( int i = 0; i < 5; ++i )
 	{
-		b[ i ] = static_cast< float >( std::fmod( p.Position( i, t ), static_cast< double >( slots::kStops ) ) );
+		b[ i ] = static_cast< float >( std::fmod( p.Position( i, t ) + flags.reelOffset, static_cast< double >( slots::kStops ) ) );
 		a[ i ] = static_cast< float >( std::fmod( p.Position( i, t - shutter ), static_cast< double >( slots::kStops ) ) );
 		//The shutter's travel, unwrapped: a reel crossing stop 0 must not
 		//integrate backwards round the whole strip.
@@ -1040,6 +1062,7 @@ JackpotPlugin::Camera JackpotPlugin::SetCamera( FFGLShader& shader, int width, i
 	camera.focal   = unzoomed * ZoomFromParam( params[ PT_ZOOM ] );
 	camera.width   = width;
 	camera.height  = height;
+	lastCamera     = camera;
 	return camera;
 }
 
@@ -1250,7 +1273,7 @@ void JackpotPlugin::DrawShower( int width, int height, GLint hostFbo )
 		showerProgram.Set( "Resolution", static_cast< float >( width ), static_cast< float >( height ) );
 		showerProgram.Set( "LightAngle", static_cast< float >( LightAngleFromParam( params[ PT_LIGHT_ANGLE ] ) * kPi / 180.0 ) );
 		showerProgram.Set( "Lights", std::clamp( params[ PT_LIGHTS ], 0.0f, 1.0f ) );
-		showerProgram.Set( "TestFlat", flat ? 1 : 0 );
+		showerProgram.Set( "TestFlat", flat != 0 ? 1 : 0 );
 		showerProgram.Set( "Time", static_cast< float >( std::fmod( clock, 3600.0 ) ) );
 		//Seen from a little above (15 degrees), so a piece lying in the pile
 		//shows its face, lifted so the pile sits along the frame's foot.

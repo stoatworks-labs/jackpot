@@ -12,6 +12,7 @@ constexpr double kDt          = 2.0e-5;
 constexpr double kWheelInertia = 9.0;   ///< kg m^2: a 1.8 m wheel, rim-heavy
 constexpr double kClapperInertia = 9.0e-5;///< kg m^2: 20 g of leather about its pivot
 constexpr double kClapperZeta = 0.08;
+constexpr double kUnload      = 0.35;  ///< the leather's stiffness straightening, of its stiffness bending
 constexpr double kBearing     = 0.5;    ///< N m, Coulomb
 constexpr double kViscous     = 0.03;   ///< N m s
 constexpr double kContactK    = 2.0e5;  ///< N/m
@@ -116,18 +117,41 @@ double ClearingDeflection( double angle, double direction )
 	return sign * hi;
 }
 
+double BearingWorkPerSegment()
+{
+	return kBearing * kSegment;
+}
+
 Simulation Simulate( const Release& r, const std::atomic< bool >* cancel )
 {
 	Simulation sim;
-	double theta = r.angle + r.pegTurn * kSegment, omega = r.speed;
+	//The angle in segments: whole + phase, phase in [0, 1). Only the phase
+	//places the pegs, so `turns` cannot change a single step.
+	long whole   = r.turns;
+	double phase = r.phase + r.pegTurn;
+	while( phase >= 1.0 )
+	{
+		phase -= 1.0;
+		++whole;
+	}
+	while( phase < 0.0 )
+	{
+		phase += 1.0;
+		--whole;
+	}
+	double omega = r.speed;
 	double psi = 0.0, psiRate = 0.0;
 	const double k = r.stiffness;
 	const double c = 2.0 * kClapperZeta * std::sqrt( k * kClapperInertia );
 	sim.startEnergy = 0.5 * kWheelInertia * omega * omega;
 
+	//The peg at the top line, counted in whole segments from the phase.
+	const double top = 0.5 * kPi / kSegment;
+	auto topPeg      = [ & ]() { return static_cast< long >( std::floor( top - phase ) ) - whole; };
 	double t = 0.0, nextKey = 0.0, still = 0.0;
 	double lastCrossEnergy = sim.startEnergy;
-	double lastTopPhase    = std::floor( ( 0.5 * kPi - theta ) / kSegment );
+	long lastTopPeg        = topPeg();
+	bool touching          = false;
 	const long maxSteps    = static_cast< long >( kMaxSim / kDt );
 	for( long step = 0; step < maxSteps; ++step )
 	{
@@ -135,12 +159,21 @@ Simulation Simulate( const Release& r, const std::atomic< bool >* cancel )
 			return {};
 		while( t >= nextKey - 1e-12 )
 		{
-			sim.angle.push_back( theta );
+			sim.angle.push_back( ( static_cast< double >( whole ) + phase ) * kSegment );
+			sim.phase.push_back( phase );
+			sim.whole.push_back( whole );
 			sim.clapper.push_back( psi );
 			nextKey += 1.0 / Simulation::kKeyRate;
 		}
 
-		double torqueWheel = 0.0, torqueClapper = -k * psi - c * psiRate;
+		const double theta = phase * kSegment;
+		//The leather: full stiffness while a peg bends it, a third of it while
+		//it straightens against one (hysteresis). Elastic both ways, a wheel too
+		//slow to clear a peg was handed back all it had put in and rocked back
+		//over three or four pegs, several times (AGENTS.md).
+		const bool unloading = touching && psi * psiRate < 0.0;
+		double torqueWheel = 0.0, torqueClapper = -k * psi * ( unloading ? kUnload : 1.0 ) - c * psiRate;
+		touching = false;
 		//Only the pegs within three segments of the top can reach the clapper.
 		const int nearest = static_cast< int >( std::lround( ( 0.5 * kPi - theta ) / kSegment ) );
 		for( int dj = -3; dj <= 3; ++dj )
@@ -157,6 +190,7 @@ Simulation Simulate( const Release& r, const std::atomic< bool >* cancel )
 			const V2 vq = { -psiRate * ( q.y - kPivotY ), psiRate * q.x };
 			const double approach = -( ( vp.x - vq.x ) * n.x + ( vp.y - vq.y ) * n.y );
 			const double f        = std::max( 0.0, kContactK * depth + kContactC * approach );
+			touching              = true;
 			torqueWheel += p.x * ( f * n.y ) - p.y * ( f * n.x );
 			torqueClapper += q.x * ( -f * n.y ) - ( q.y - kPivotY ) * ( -f * n.x );
 		}
@@ -177,18 +211,30 @@ Simulation Simulate( const Release& r, const std::atomic< bool >* cancel )
 				++sim.reversals;
 		}
 		psiRate += torqueClapper / kClapperInertia * kDt;
-		theta += omega * kDt;
+		phase += omega * kDt / kSegment;
+		//Exact for a phase in [1, 2) or [-1, 0) (Sterbenz): no rounding moves
+		//between the phase and the whole segments.
+		if( phase >= 1.0 )
+		{
+			phase -= 1.0;
+			++whole;
+		}
+		else if( phase < 0.0 )
+		{
+			phase += 1.0;
+			--whole;
+		}
 		psi += psiRate * kDt;
 		t += kDt;
 
 		//A peg crossing the top line: the energy the passage took.
-		const double phase = std::floor( ( 0.5 * kPi - theta ) / kSegment );
-		if( phase != lastTopPhase )
+		const long peg = topPeg();
+		if( peg != lastTopPeg )
 		{
 			const double energy = 0.5 * kWheelInertia * omega * omega;
 			sim.pegLoss.push_back( lastCrossEnergy - energy );
 			lastCrossEnergy = energy;
-			lastTopPhase    = phase;
+			lastTopPeg      = peg;
 			++sim.pegsPassed;
 		}
 
@@ -200,12 +246,16 @@ Simulation Simulate( const Release& r, const std::atomic< bool >* cancel )
 		{
 			sim.settled = true;
 			sim.natural = t - 0.4;
-			const double pegs = r.pegTurn * kSegment;
-			sim.segment = static_cast< int >( std::floor( Wrap( 0.5 * kPi - ( theta - pegs ) ) / kSegment ) ) % kSegments;
+			//The segment under the clapper in the paint's frame: the pegs' own
+			//turn (the negative control's) taken back out.
+			const long under = static_cast< long >( std::floor( top - phase + r.pegTurn ) ) - whole;
+			sim.segment      = static_cast< int >( ( ( under % kSegments ) + kSegments ) % kSegments );
 			const size_t keep = static_cast< size_t >( std::ceil( sim.natural * Simulation::kKeyRate ) ) + 1;
 			if( sim.angle.size() > keep )
 			{
 				sim.angle.resize( keep );
+				sim.phase.resize( keep );
+				sim.whole.resize( keep );
 				sim.clapper.resize( keep );
 			}
 			return sim;
@@ -215,8 +265,6 @@ Simulation Simulate( const Release& r, const std::atomic< bool >* cancel )
 	return sim;
 }
 
-namespace
-{
 int Wanted( const Request& r )
 {
 	const std::vector< int >& layout = Layout();
@@ -248,7 +296,6 @@ int Wanted( const Request& r )
 	default: return pick( [ & ]( int, int v ) { return v == bet; } );
 	}
 }
-} // namespace
 
 Plan MakePlan( const Request& r, const std::atomic< bool >* cancel )
 {
@@ -260,7 +307,7 @@ Plan MakePlan( const Request& r, const std::atomic< bool >* cancel )
 
 	Stream s( Hash( r.seed, r.play, 0x77e1u ) );
 	Release release;
-	release.angle     = s.Range( 0.0, kSegment );
+	release.phase     = s.Uniform();
 	release.stiffness = r.stiffness;
 	const double want = std::max( 1.0, r.duration - kPull );
 	double speed      = std::clamp( 0.7 * want * std::sqrt( r.stiffness / 4.0 ), 1.0, 14.0 );
@@ -303,7 +350,7 @@ Plan MakePlan( const Request& r, const std::atomic< bool >* cancel )
 	plan.paintFrom   = r.paintNow;
 	//Where the paint must be when the wheel is let go, a pull of at least a
 	//quarter turn on from where it stands.
-	double delta = Wrap( release.angle + plan.paintOffset - r.paintNow );
+	double delta = Wrap( release.Angle() + plan.paintOffset - r.paintNow );
 	while( delta < 0.5 * release.speed * kPull )
 		delta += 2.0 * kPi;
 	plan.paintAtRelease = r.paintNow + delta;
@@ -357,7 +404,7 @@ double Plan::PaintAngle( double seconds ) const
 		const size_t k = static_cast< size_t >( std::floor( f ) );
 		physical       = sim.angle[ k ] + ( sim.angle[ k + 1 ] - sim.angle[ k ] ) * ( f - static_cast< double >( k ) );
 	}
-	return physical + ( paintAtRelease - release.angle );
+	return physical + ( paintAtRelease - release.Angle() );
 }
 
 double Plan::Clapper( double seconds ) const

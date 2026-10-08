@@ -60,21 +60,34 @@ struct Request
 	bool biasedDraw = false;
 };
 
+/// The wheel's angle is kept in segments as whole + phase, and only the phase
+/// reaches the pegs: whole segments are invisible to the physics BY
+/// CONSTRUCTION (roulette's frets are the same), which is what makes turning
+/// the paint by k segments exact. `jptest --wheel` holds the phase and the
+/// clapper bit-identical under any `turns`.
 struct Release
 {
 	double speed     = 6.0;///< rad/s, anticlockwise
-	double angle     = 0.0;///< the pegs' angle at release, rad
+	double phase     = 0.0;///< the pegs' angle at release, in segments, 0..1
+	long turns       = 0;  ///< ... and its whole segments (the physics must not see these)
 	double stiffness = 4.0;
-	double pegTurn   = 0.0;///< negative control: pegs turned by this many segments (not whole: the physics sees it)
+	double pegTurn   = 0.0;///< negative control: pegs turned by this many segments, the physics sees it
+
+	double Angle() const
+	{
+		return ( static_cast< double >( turns ) + phase ) * 2.0 * kPi / kSegments;
+	}
 };
 
 struct Simulation
 {
-	std::vector< double > angle;  ///< wheel angle at kKeyRate
+	std::vector< double > angle;  ///< wheel angle at kKeyRate, rad (for drawing)
+	std::vector< double > phase;  ///< ... its phase in segments, 0..1
+	std::vector< long > whole;    ///< ... and whole segments
 	std::vector< double > clapper;///< clapper deflection at kKeyRate, rad
 	double natural  = 0.0;
 	bool settled    = false;
-	int segment     = 0;          ///< physical segment under the clapper at rest
+	int segment     = 0;          ///< the wheel's segment under the clapper at rest, whole turns and all
 	int pegsPassed  = 0;
 	int reversals   = 0;          ///< the wheel rocked back
 	std::vector< double > pegLoss;///< J taken by each peg passage (energy before minus after)
@@ -83,6 +96,11 @@ struct Simulation
 };
 
 Simulation Simulate( const Release& release, const std::atomic< bool >* cancel = nullptr );
+
+/// The segment a play will show (Result read against the layout).
+int Wanted( const Request& r );
+/// Joules the bearing takes while the wheel turns one segment.
+double BearingWorkPerSegment();
 
 /// The clapper's deflection that just clears the pegs at wheel angle a, with
 /// the wheel turning in the direction `direction` (+1 or -1): for the hand pull.

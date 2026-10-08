@@ -245,6 +245,7 @@ Simulation Simulate( const Launch& L, const std::atomic< bool >* cancel )
 	V3 v = { L.ballSpeed * std::sin( L.ballAngle ), -L.ballSpeed * std::cos( L.ballAngle ), 0.0 };
 
 	double still = 0.0, t = 0.0, nextKey = 0.0;
+	double stillPhi = 0.0, stillR = 0.0, stillZ = 0.0, stillT = 0.0;
 	const long maxSteps = static_cast< long >( kMaxSim / kDt );
 	for( long step = 0; step < maxSteps; ++step )
 	{
@@ -353,28 +354,39 @@ Simulation Simulate( const Launch& L, const std::atomic< bool >* cancel )
 
 		t += kDt;
 
-		//At rest in a pocket, turning with the rotor.
+		//At rest in a pocket, turning with the rotor. The pose is the one it
+		//had when it came to rest, not the one kRestFor later: it creeps up to
+		//12 mm/s meanwhile, and the later pose jumped from the last key.
 		const V3 rel = v - SurfaceVelocity( p, omega );
 		if( inPocket && r > kPocketIn && r < kPocketOut && Length( rel ) < kRestSpeed )
+		{
+			if( still == 0.0 )
+			{
+				stillPhi = phi;
+				stillR   = r;
+				stillZ   = p.z;
+				stillT   = t;
+			}
 			still += kDt;
+		}
 		else
 			still = 0.0;
 		if( still >= kRestFor )
 		{
 			sim.settled = true;
-			sim.natural = t - kRestFor;
+			sim.natural = stillT;
 			//The pocket in the ROTOR's frame: counted from where the rotor's own
 			//pocket 0 is now, whole turns and all. (The frets' fractional phase
 			//alone, which is all the physics uses, loses the whole pockets the
 			//rotor turned during the spin, and the ring was turned that many
 			//pockets wrong: a ball in 35's pocket reported 22.)
-			const double rotorPockets = RotorPockets( L, t );
-			const double psi = Wrap( phi ) / pocket - rotorPockets;
+			const double rotorPockets = RotorPockets( L, stillT );
+			const double psi = Wrap( stillPhi ) / pocket - rotorPockets;
 			sim.pocket       = static_cast< int >( ( ( static_cast< long >( std::floor( psi + 0.5 ) ) % N ) + N ) % N );
 			const double rotorAngle = rotorPockets * pocket;
-			sim.restAngleInRotor = phi - rotorAngle;
-			sim.restRadius   = r;
-			sim.restHeight   = p.z;
+			sim.restAngleInRotor = stillPhi - rotorAngle;
+			sim.restRadius   = stillR;
+			sim.restHeight   = stillZ;
 			//Trim the keys to the rest: the ball rides the pocket from here.
 			const size_t keep = static_cast< size_t >( std::ceil( sim.natural * Simulation::kKeyRate ) ) + 1;
 			if( sim.keys.size() > keep )
@@ -405,8 +417,12 @@ double Hermite( double a0, double w0, double a1, double w1, double T, double t, 
 	return h00 * a0 + h10 * T * w0 + h01 * a1 + h11 * T * w1;
 }
 
-int WantedIndex( const Request& r, int N, const std::vector< int >& numbers )
+} // namespace
+
+int Wanted( const Request& r )
 {
+	const std::vector< int >& numbers = Numbers( r.wheel );
+	const int N = static_cast< int >( numbers.size() );
 	int bet = r.bet;
 	if( r.wheel == RouletteWheel::European && bet == 37 )
 		bet = 0;
@@ -418,13 +434,12 @@ int WantedIndex( const Request& r, int N, const std::vector< int >& numbers )
 	Stream s( Hash( r.seed, r.play, 0x4011u ) );
 	switch( r.result )
 	{
-	case Result::Random: return s.Below( N );
+	case Result::Random: return s.Below( r.biasedDraw ? N - 1 : N );
 	case Result::NearMiss: return ( betIndex + ( s.Below( 2 ) == 0 ? 1 : N - 1 ) ) % N;
 	case Result::Lose: return ( betIndex + 1 + s.Below( N - 1 ) ) % N;
 	default: return betIndex;
 	}
 }
-} // namespace
 
 Plan MakePlan( const Request& r, const std::atomic< bool >* cancel )
 {
@@ -433,7 +448,7 @@ Plan MakePlan( const Request& r, const std::atomic< bool >* cancel )
 	Plan plan;
 	plan.request = r;
 	plan.pockets = static_cast< int >( numbers.size() );
-	plan.wanted  = WantedIndex( r, plan.pockets, numbers );
+	plan.wanted  = Wanted( r );
 	plan.spinUp  = kHandSpin;
 
 	Stream s( Hash( r.seed, r.play, 0x2011u ) );
@@ -574,7 +589,9 @@ bool Plan::Ball( double seconds, V3& at ) const
 	const double t    = simT - spinUp;
 	if( t < 0.0 )
 		return false;
-	if( sim.settled && t >= sim.natural )
+	//At rest from the play's end on: simT - spinUp can round a hair short of
+	//sim.natural there, which drew the last keys a few microns off the pose.
+	if( sim.settled && ( t >= sim.natural || seconds >= playback.duration ) )
 	{
 		//Riding the pocket: the rest position, carried round by the ring.
 		const double a = sim.restAngleInRotor + PaintAngle( seconds ) - paintOffset;

@@ -65,6 +65,15 @@ public:
 	FFResult SetTime( double time ) override;
 	void SetBeatInfo( float bpm, float barPhase ) override;
 
+	/// The 3D games' camera, and where it puts a point on the frame.
+	struct Camera
+	{
+		V3 pos, right, up, forward;
+		double focal = 1.0;
+		int width = 1, height = 1;
+		/// Pixels (x, y from the bottom left) and depth; depth <= 0 behind.
+		V3 Project( V3 p ) const;
+	};
 	bool IsEffect() const
 	{
 		return isEffect;
@@ -87,10 +96,11 @@ public:
 	{
 		clockScale = scale;
 	}
-	/// Draw without lighting, glass or lamps (the readbacks).
-	void SetFlatForTest( bool on )
+	/// 0 lit; 1 without lighting, glass or lamps; 2 the id picture (roulette:
+	/// the number painted where each ray lands; the money wheel: the segment).
+	void SetFlatForTest( int mode )
 	{
-		flat = on;
+		flat = mode;
 	}
 	const Play& CurrentPlay() const
 	{
@@ -122,6 +132,7 @@ public:
 		bool shiftFrets     = false;
 		bool biasedDraw     = false;
 		double restitution  = -1.0;
+		double reelOffset   = 0.0;///< stops added to every reel as drawn (--slots-readback's negative)
 	};
 	TestFlags& Flags()
 	{
@@ -160,6 +171,11 @@ public:
 	{
 		return PlayDuration();
 	}
+	/// The camera the last 3D frame was drawn with.
+	const Camera& LastCamera() const
+	{
+		return lastCamera;
+	}
 	/// Fixed per-frame transport for the harness: bpm and bar phase.
 	void SetTransportForTest( double bpm, double barPhase )
 	{
@@ -186,16 +202,7 @@ private:
 	Play MakePlayFor( Game game, bool rest ) const;
 
 	void SetCommonUniforms( ffglex::FFGLShader& shader, int width, int height, const FFGLTextureStruct* input );
-	void SetTextUniforms( ffglex::FFGLShader& shader, const std::vector< std::string >& spans );
-	/// The 3D games' camera, and where it puts a point on the frame.
-	struct Camera
-	{
-		V3 pos, right, up, forward;
-		double focal = 1.0;
-		int width = 1, height = 1;
-		/// Pixels (x, y from the bottom left) and depth; depth <= 0 behind.
-		V3 Project( V3 p ) const;
-	};
+	void SetTextUniforms( ffglex::FFGLShader& shader, std::vector< std::string > spans );
 	Camera SetCamera( ffglex::FFGLShader& shader, int width, int height, double radius, double rise, V3 target, double lowerBy = 0.0 );
 	void DrawSlots( ffglex::FFGLShader& shader, double t );
 	void DrawRoulette( ffglex::FFGLShader& shader, double t, int width, int height );
@@ -222,6 +229,7 @@ private:
 	double clock = 0.0;///< seconds of plugin time, monotonic, frame-relative
 	double frameDt = 1.0 / 60.0;
 	Transport transport;
+	Camera lastCamera;
 
 	//Playing.
 	Play play;
@@ -244,7 +252,7 @@ private:
 	std::vector< std::future< Play > > abandoned;
 	std::vector< std::shared_ptr< std::atomic< bool > > > abandonedCancel;
 	TestFlags flags;
-	bool flat = false;
+	int flat = 0;
 
 	//What carries from play to play.
 	std::array< double, slots::kMaxReels > reelStops {};

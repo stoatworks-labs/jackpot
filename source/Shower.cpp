@@ -31,18 +31,19 @@ Quat RandomRotation( Stream& s )
 	return dice::Normalise( Quat { a * std::sin( 2 * kPi * u2 ), a * std::cos( 2 * kPi * u2 ), b * std::sin( 2 * kPi * u3 ), b * std::cos( 2 * kPi * u3 ) } );
 }
 
-/// Per unit mass: the disc's body-frame principal moments.
-void Moments( const Piece& p, double& axial, double& across )
+/// Per unit mass: the disc's body-frame principal moments (or, as a negative
+/// control, a ball's).
+void Moments( const Piece& p, double& axial, double& across, bool ball = false )
 {
 	const double h = 2.0 * p.half;
-	axial          = 0.5 * p.radius * p.radius;
-	across         = 0.25 * p.radius * p.radius + h * h / 12.0;
+	axial          = ball ? 0.4 * p.radius * p.radius : 0.5 * p.radius * p.radius;
+	across         = ball ? axial : 0.25 * p.radius * p.radius + h * h / 12.0;
 }
 
-M3 InverseInertiaWorld( const Piece& p, const M3& r )
+M3 InverseInertiaWorld( const Piece& p, const M3& r, bool ball )
 {
 	double axial = 0.0, across = 0.0;
-	Moments( p, axial, across );
+	Moments( p, axial, across, ball );
 	M3 inv;
 	inv.m[ 0 ][ 0 ] = 1.0 / across;
 	inv.m[ 1 ][ 1 ] = 1.0 / across;
@@ -50,10 +51,10 @@ M3 InverseInertiaWorld( const Piece& p, const M3& r )
 	return r * inv * Transpose( r );
 }
 
-double Kinetic( const Piece& p, const M3& r )
+double Kinetic( const Piece& p, const M3& r, bool ball )
 {
 	double axial = 0.0, across = 0.0;
-	Moments( p, axial, across );
+	Moments( p, axial, across, ball );
 	const V3 wb = Transpose( r ) * p.w;
 	return 0.5 * Dot( p.v, p.v ) + 0.5 * ( across * ( wb.x * wb.x + wb.y * wb.y ) + axial * wb.z * wb.z );
 }
@@ -153,6 +154,7 @@ void Shower::Settle( Piece& p )
 	const M3 r     = ToMatrix( p.q );
 	const V3 n     = r * V3 { 0, 0, 1 };
 	const V3 up    = { 0, n.y >= 0.0 ? 1.0 : -1.0, 0 };
+	worstSnap      = std::max( worstSnap, std::acos( std::clamp( std::fabs( n.y ), 0.0, 1.0 ) ) * 180.0 / kPi );
 	const M3 flat  = dice::Align( n, up ) * r;
 	p.q            = dice::FromMatrix( flat );
 	p.x.y          = FloorAt( p.x.x, p.x.z ) + p.half;
@@ -189,7 +191,7 @@ void Shower::StepPiece( Piece& p )
 	if( !settings.noDrag && speed > 1e-9 )
 	{
 		const double face = std::fabs( Dot( n, p.v ) ) / speed;
-		const double kFace = p.kind == PieceKind::Coin ? 0.037 : 0.079, kEdge = 0.009;//per metre
+		const double kFace = p.kind == PieceKind::Coin ? kCoinFace : kChipFace;
 		const double k     = ( kEdge + ( kFace - kEdge ) * face ) * mpu;
 		p.v -= p.v * ( std::min( 0.5, k * speed * dt ) );
 	}
@@ -197,10 +199,10 @@ void Shower::StepPiece( Piece& p )
 
 	//Torque-free rotation with the gyroscopic term, in the body frame.
 	double axial = 0.0, across = 0.0;
-	Moments( p, axial, across );
+	Moments( p, axial, across, settings.ballInertia );
 	V3 wb        = Transpose( r ) * p.w;
 	const V3 L   = { across * wb.x, across * wb.y, axial * wb.z };
-	const V3 gyro = Cross( wb, L );
+	const V3 gyro = settings.noGyro ? V3 {} : Cross( wb, L );
 	wb           = wb - V3 { gyro.x / across, gyro.y / across, gyro.z / axial } * dt;
 	p.w          = r * wb;
 
@@ -248,7 +250,7 @@ void Shower::StepPiece( Piece& p )
 	};
 	C contacts[ 5 ];
 	int used         = 0;
-	const M3 invI    = InverseInertiaWorld( p, r );
+	const M3 invI    = InverseInertiaWorld( p, r, settings.ballInertia );
 	const double bounce = settings.restitution >= 0.0 ? settings.restitution : ( p.kind == PieceKind::Coin ? kCoinBounce : kChipBounce );
 	for( int i = 0; i < count; ++i )
 	{
@@ -275,7 +277,8 @@ void Shower::StepPiece( Piece& p )
 		p.still = 0.0;
 		return;
 	}
-	const double before = Kinetic( p, r );
+	++contactSteps;
+	const double before = Kinetic( p, r, settings.ballInertia );
 	for( int it = 0; it < 6; ++it )
 		for( int i = 0; i < used; ++i )
 		{
@@ -302,7 +305,7 @@ void Shower::StepPiece( Piece& p )
 				p.w += invI * Cross( c.r, t * app );
 			}
 		}
-	const double after = Kinetic( p, r );
+	const double after = Kinetic( p, r, settings.ballInertia );
 	if( after > before * ( 1.0 + 1e-9 ) + 1e-12 )
 	{
 		++energyRises;

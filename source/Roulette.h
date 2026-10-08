@@ -86,8 +86,9 @@ struct Request
 	double paintNow      = 0.0; ///< the numbered ring's angle when Play is pressed
 	double paintSpeedNow = 0.0; ///< ... and its angular velocity
 
-	bool noShift = false;///< negative control: never turn the ring (the physics' own pocket shows)
-	bool noWarp  = false;
+	bool noShift    = false;///< negative control: never turn the ring (the physics' own pocket shows)
+	bool noWarp     = false;
+	bool biasedDraw = false;///< negative control: Random draws Below( N - 1 )
 };
 
 /// The physical state the simulation starts from, as `jptest` drives it.
@@ -149,6 +150,10 @@ struct Plan
 	/// The ball's centre at playback seconds; false before release.
 	bool Ball( double seconds, V3& at ) const;
 };
+
+/// The pocket (index in Numbers order) a play will show: Result read
+/// against the bet, Random uniform over the pockets.
+int Wanted( const Request& r );
 
 Plan MakePlan( const Request& r, const std::atomic< bool >* cancel = nullptr );
 /// No throw: the ring where it is, turning on, no ball.

@@ -61,6 +61,8 @@ struct ShowerSettings
 	double aspect    = 16.0 / 9.0;
 	double restitution = -1.0;///< < 0: the material's own (negative control: > 1)
 	bool noDrag      = false;
+	bool noGyro      = false;///< negative control: the torque-free tumble without its gyroscopic term
+	bool ballInertia = false;///< negative control: a disc given a ball's moments of inertia
 };
 
 class Shower
@@ -71,6 +73,8 @@ public:
 	static constexpr int kMaxResting  = 700;
 	static constexpr double kFloor    = -0.47;///< frame heights: the table's edge, just above the frame's bottom
 	static constexpr double kChipMetres = 0.039;
+	/// Quadratic drag per metre of the piece's real size, face on and edge on.
+	static constexpr double kCoinFace = 0.037, kChipFace = 0.079, kEdge = 0.009;
 
 	ShowerSettings settings;
 
@@ -99,7 +103,9 @@ public:
 	double MetresPerUnit( const Piece& p ) const;
 	uint32_t seed = 0;
 	long spawned  = 0;
+	long contactSteps = 0; ///< steps in which a piece touched the table or the pile
 	long energyRises = 0;  ///< contacts that left a piece with more kinetic energy than they found
+	double worstSnap = 0.0;///< degrees: the most a piece was turned to lie flat as it settled
 	double worstRise = 0.0;
 
 	/// Step one piece by kDt: the physics, for the checks.
