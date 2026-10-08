@@ -34,6 +34,7 @@ constexpr int kClockVotes       = 4;
 constexpr double kMaxFrameDelta = 0.25;///< host seconds; a bigger step is a jump
 constexpr double kBannerFor     = 3.5; ///< seconds a win's banner stays up
 constexpr double kCountUp       = 1.6; ///< seconds the win meter takes to count
+constexpr int kBallSlots        = 192; ///< columns of the lottery's ball texture: this draw's, and the last's draining
 
 const char* const kGameNames[]     = { "Slots", "Roulette", "Money Wheel", "Craps", "Lottery", "Shower Only" };
 const char* const kLandNames[]     = { "Time", "Beat", "Bar" };
@@ -285,44 +286,22 @@ JackpotPlugin::~JackpotPlugin()
 }
 
 //---------------------------------------------------------------------------
-bool JackpotPlugin::CompileGame( Game game, const std::string& fragment )
-{
-	const std::string vertex = std::string( shaders::kVersion ) + shaders::kQuadVertex;
-	if( !programs[ static_cast< int >( game ) ].Compile( vertex.c_str(), fragment.c_str() ) )
-	{
-		diag::error( std::string( "the " ) + kGameNames[ static_cast< int >( game ) ] + " shader failed to compile" );
-		return false;
-	}
-	return true;
-}
-
 FFResult JackpotPlugin::InitGL( const FFGLViewportStruct* vp )
 {
 	diag::init();
 	diag::info( std::string( "GL vendor=" ) + glStringOrUnknown( GL_VENDOR ) + " renderer=" + glStringOrUnknown( GL_RENDERER )
 	            + " version=" + glStringOrUnknown( GL_VERSION ) );
 
-	using namespace shaders;
+	//Every program from the one list (Shaders.cpp), so what the harness checks
+	//through glslc is what is compiled here.
 	bool ok = true;
-	ok &= CompileGame( Game::Slots, Assemble( { kVersion, kCommon, kText, kSlots, kSlotsMain } ) );
-	ok &= CompileGame( Game::Roulette, Assemble( { kVersion, kCommon, kText, kRoulette, kRouletteMain } ) );
-	ok &= CompileGame( Game::MoneyWheel, Assemble( { kVersion, kCommon, kText, kWheel } ) );
-	ok &= CompileGame( Game::Craps, Assemble( { kVersion, kCommon, kText, kCraps, kCrapsMain } ) );
-	ok &= CompileGame( Game::Lottery, Assemble( { kVersion, kCommon, kText, kLottery } ) );
-	ok &= CompileGame( Game::ShowerOnly, Assemble( { kVersion, kCommon, kBlank } ) );
+	const std::vector< shaders::Program > list = shaders::Programs();
+	for( size_t i = 0; i < list.size(); ++i )
 	{
-		const std::string vs = Assemble( { kVersion, kShowerVertex } );
-		const std::string fs = Assemble( { kVersion, kCommon, kText, kShowerFragment } );
-		if( !showerProgram.Compile( vs.c_str(), fs.c_str() ) )
+		ffglex::FFGLShader& shader = i < static_cast< size_t >( Game::Count ) ? programs[ i ] : i == list.size() - 2 ? showerProgram : compositeProgram;
+		if( !shader.Compile( list[ i ].vertex.c_str(), list[ i ].fragment.c_str() ) )
 		{
-			diag::error( "the shower shader failed to compile" );
-			ok = false;
-		}
-		const std::string cv = std::string( kVersion ) + kQuadVertex;
-		const std::string cf = Assemble( { kVersion, kComposite } );
-		if( !compositeProgram.Compile( cv.c_str(), cf.c_str() ) )
-		{
-			diag::error( "the composite shader failed to compile" );
+			diag::error( std::string( "the " ) + list[ i ].name + " shader failed to compile" );
 			ok = false;
 		}
 	}
@@ -333,11 +312,16 @@ FFResult JackpotPlugin::InitGL( const FFGLViewportStruct* vp )
 		return FF_FAIL;
 	}
 
-	GLuint textures[ 3 ];
-	glGenTextures( 3, textures );
+	GLuint textures[ 4 ];
+	glGenTextures( 4, textures );
 	atlasTexture  = textures[ 0 ];
 	symbolTexture = textures[ 1 ];
 	blankTexture  = textures[ 2 ];
+	ballTexture   = textures[ 3 ];
+	glBindTexture( GL_TEXTURE_2D, ballTexture );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA32F, kBallSlots, 3, 0, GL_RGBA, GL_FLOAT, nullptr );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
 	const unsigned char grey[ 4 ] = { 200, 200, 200, 255 };
 	glBindTexture( GL_TEXTURE_2D, blankTexture );
 	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, grey );
@@ -378,7 +362,7 @@ FFResult JackpotPlugin::DeInitGL()
 	showerProgram.FreeGLResources();
 	compositeProgram.FreeGLResources();
 	quad.Release();
-	GLuint textures[ 5 ] = { atlasTexture, symbolTexture, blankTexture, showerColour, 0 };
+	GLuint textures[ 5 ] = { atlasTexture, symbolTexture, blankTexture, showerColour, ballTexture };
 	for( GLuint t : textures )
 		if( t != 0 )
 			glDeleteTextures( 1, &t );
@@ -392,7 +376,7 @@ FFResult JackpotPlugin::DeInitGL()
 		glDeleteBuffers( 1, &quadVbo );
 	if( showerVao )
 		glDeleteVertexArrays( 1, &showerVao );
-	atlasTexture = symbolTexture = blankTexture = showerColour = showerDepth = showerFbo = showerVbo = quadVbo = showerVao = 0;
+	atlasTexture = symbolTexture = blankTexture = showerColour = showerDepth = showerFbo = showerVbo = quadVbo = showerVao = ballTexture = 0;
 	showerWidth = showerHeight = 0;
 	return FF_SUCCESS;
 }
@@ -1014,11 +998,289 @@ void JackpotPlugin::DrawSlots( FFGLShader& shader, double t )
 	SetTextUniforms( shader, { "JACKPOT", "CREDITS", "WIN", bannerText, "SPIN" } );
 }
 
-void JackpotPlugin::DrawRoulette( FFGLShader&, double, int, int ) {}
-void JackpotPlugin::DrawWheel( FFGLShader&, double ) {}
-void JackpotPlugin::DrawCraps( FFGLShader&, double, int, int ) {}
-void JackpotPlugin::DrawLottery( FFGLShader&, double, int, int ) {}
-void JackpotPlugin::DrawShower( int, int, GLint ) {}
+//---------------------------------------------------------------------------
+// The 3D games' camera: to the south, Tilt above the horizon, looking at
+// `target`, backed off so a disc of `radius` (rising `rise` above it) fills the
+// frame at Zoom 1 whatever the aspect. A right-handed view: right x up points
+// at the viewer (polyhedral's trap: the other way mirrors the picture).
+//---------------------------------------------------------------------------
+V3 JackpotPlugin::Camera::Project( V3 p ) const
+{
+	const V3 d         = p - pos;
+	const double depth = Dot( d, forward );
+	if( depth <= 1e-9 )
+		return { 0.0, 0.0, -1.0 };
+	const double sx = Dot( d, right ) * focal / depth, sy = Dot( d, up ) * focal / depth;
+	return { 0.5 * ( sx * height + width ), 0.5 * ( sy * height + height ), depth };
+}
+
+JackpotPlugin::Camera JackpotPlugin::SetCamera( FFGLShader& shader, int width, int height, double radius, double rise, V3 target, double lowerBy )
+{
+	const double e        = std::max( 5.0, TiltFromParam( params[ PT_TILT ] ) - lowerBy ) * kPi / 180.0;
+	const double aspect   = static_cast< double >( width ) / height;
+	const double unzoomed = 1.0 / std::tan( 14.0 * kPi / 180.0 );
+	const double tall     = radius * std::sin( e ) + rise * std::cos( e );
+	const double half     = std::max( tall, radius / aspect ) * 1.1;
+	const double distance = half * unzoomed;
+	const V3 forward      = { 0.0, std::cos( e ), -std::sin( e ) };
+	const V3 up           = { 0.0, std::sin( e ), std::cos( e ) };
+	const V3 right        = { 1.0, 0.0, 0.0 };
+	const V3 pos          = target - forward * distance;
+	shader.Set( "CamPos", static_cast< float >( pos.x ), static_cast< float >( pos.y ), static_cast< float >( pos.z ) );
+	shader.Set( "CamRight", static_cast< float >( right.x ), static_cast< float >( right.y ), static_cast< float >( right.z ) );
+	shader.Set( "CamUp", static_cast< float >( up.x ), static_cast< float >( up.y ), static_cast< float >( up.z ) );
+	shader.Set( "CamForward", static_cast< float >( forward.x ), static_cast< float >( forward.y ), static_cast< float >( forward.z ) );
+	shader.Set( "CamFocal", static_cast< float >( unzoomed * ZoomFromParam( params[ PT_ZOOM ] ) ) );
+	shader.Set( "Samples", flat ? 1 : 4 );
+	Camera camera;
+	camera.pos     = pos;
+	camera.right   = right;
+	camera.up      = up;
+	camera.forward = forward;
+	camera.focal   = unzoomed * ZoomFromParam( params[ PT_ZOOM ] );
+	camera.width   = width;
+	camera.height  = height;
+	return camera;
+}
+
+void JackpotPlugin::DrawRoulette( FFGLShader& shader, double t, int width, int height )
+{
+	const roulette::Plan& p          = play.roulette;
+	const std::vector< int >& numbers = roulette::Numbers( p.request.wheel );
+	const int N                      = static_cast< int >( numbers.size() );
+	GLint pocketNumber[ 38 ]         = {};
+	for( int i = 0; i < N; ++i )
+		pocketNumber[ i ] = numbers[ static_cast< size_t >( i ) ];
+	//The ring's angle reduced in double: it keeps turning between plays.
+	const double ring = std::fmod( p.PaintAngle( t ), 2.0 * kPi );
+	V3 ball;
+	const bool hasBall = p.Ball( t, ball );
+	int highlight      = -1;
+	if( !p.idle && t >= p.playback.duration && p.sim.settled )
+		for( int i = 0; i < N; ++i )
+			if( numbers[ static_cast< size_t >( i ) ] == p.outcome.value )
+				highlight = i;
+
+	SetCamera( shader, width, height, 0.47, 0.09, { 0.0, 0.0, 0.0 } );
+	shader.Set( "RingAngle", static_cast< float >( ring ) );
+	shader.Set( "Pockets", N );
+	glUniform1iv( shader.FindUniform( "PocketNumber" ), 38, pocketNumber );
+	shader.Set( "Deflectors", params[ PT_DEFLECTORS ] > 0.5f ? 1 : 0 );
+	shader.Set( "BallAt", static_cast< float >( ball.x ), static_cast< float >( ball.y ), static_cast< float >( ball.z ), hasBall ? 1.0f : 0.0f );
+	shader.Set( "Highlight", highlight );
+	SetTextUniforms( shader, {} );
+}
+void JackpotPlugin::DrawWheel( FFGLShader& shader, double t )
+{
+	const wheel::Plan& p           = play.wheel;
+	const std::vector< int >& layout = wheel::Layout();
+	GLint values[ wheel::kSegments ];
+	for( int i = 0; i < wheel::kSegments; ++i )
+		values[ i ] = layout[ static_cast< size_t >( i ) ];
+	const bool atRest  = !p.idle && t >= p.playback.duration && p.sim.settled;
+	const int shown    = ( ( p.sim.segment - p.shift ) % wheel::kSegments + wheel::kSegments ) % wheel::kSegments;
+	const double since = clock - winSince;
+	shader.Set( "WheelAngle", static_cast< float >( std::fmod( p.PaintAngle( t ), 2.0 * kPi ) ) );
+	shader.Set( "ClapperAngle", static_cast< float >( p.Clapper( t ) ) );
+	glUniform1iv( shader.FindUniform( "Layout" ), wheel::kSegments, values );
+	shader.Set( "Highlight", atRest ? shown : -1 );
+	shader.Set( "Celebrate", atRest && p.outcome.win && since >= 0.0 && since < kBannerFor ? 1 : 0 );
+	//= mirrored in Shaders.cpp (kWheel's SPAN_ constants).
+	SetTextUniforms( shader, { "$1", "$2", "$5", "$10", "$20", "JOKER", "JACKPOT" } );
+}
+namespace
+{
+/// The dice engine's axes (y up, the back wall at z = -0.20) into the drawn
+/// scene's (z up, the back wall at y = +0.20): (x, y, z) -> (x, -z, y), a
+/// proper rotation, so R becomes P R P^T and handedness is kept.
+V3 ToScene( V3 v )
+{
+	return { v.x, -v.z, v.y };
+}
+
+void ToSceneMatrix( const M3& r, float out[ 9 ] )
+{
+	//Columns of P R P^T: the images of the scene's axes.
+	const V3 axes[ 3 ] = { { 1, 0, 0 }, { 0, 0, -1 }, { 0, 1, 0 } };//P^T e_x, P^T e_y, P^T e_z
+	for( int c = 0; c < 3; ++c )
+	{
+		const V3 col = ToScene( r * axes[ c ] );
+		out[ c * 3 + 0 ] = static_cast< float >( col.x );
+		out[ c * 3 + 1 ] = static_cast< float >( col.y );
+		out[ c * 3 + 2 ] = static_cast< float >( col.z );
+	}
+}
+} // namespace
+
+void JackpotPlugin::DrawCraps( FFGLShader& shader, double t, int width, int height )
+{
+	const craps::Plan& p   = play.craps;
+	const dice::geo::Solid& cube = dice::geo::GetSolid( dice::geo::Shape::Cube );
+	const dice::geo::Labelling& labels = dice::geo::GetLabelling( dice::geo::DieType::D6, 0 );
+	float rot[ 4 * 9 ] = {};
+	float pos[ 4 * 3 ] = {};
+	GLint on[ 4 ]      = {};
+	for( int i = 0; i < 4; ++i )
+	{
+		V3 x;
+		M3 r;
+		const bool shown = i < 2 ? p.DieAt( i, t, x, r ) : p.OldDieAt( i - 2, t, x, r );
+		if( !shown )
+			continue;
+		on[ i ]        = 1;
+		const V3 at    = ToScene( x );
+		pos[ i * 3 + 0 ] = static_cast< float >( at.x );
+		pos[ i * 3 + 1 ] = static_cast< float >( at.y );
+		pos[ i * 3 + 2 ] = static_cast< float >( at.z );
+		ToSceneMatrix( r, &rot[ i * 9 ] );
+	}
+	//Which value is on which face, in the scene's body axes (P n).
+	GLint faceValue[ 6 ] = { 1, 6, 2, 5, 3, 4 };
+	for( size_t f = 0; f < cube.faces.size() && f < labels.digit.size(); ++f )
+	{
+		const V3 n = ToScene( cube.faces[ f ].normal );
+		const double a[ 3 ] = { n.x, n.y, n.z };
+		int axis = 0;
+		for( int k = 1; k < 3; ++k )
+			if( std::fabs( a[ k ] ) > std::fabs( a[ axis ] ) )
+				axis = k;
+		faceValue[ axis * 2 + ( a[ axis ] > 0.0 ? 0 : 1 ) ] = labels.digit[ f ];
+	}
+	const double since = clock - winSince;
+	SetCamera( shader, width, height, 0.26, 0.06, { 0.0, 0.0, 0.0 } );
+	glUniformMatrix3fv( shader.FindUniform( "DieRot" ), 4, GL_FALSE, rot );
+	glUniform3fv( shader.FindUniform( "DiePos" ), 4, pos );
+	glUniform1iv( shader.FindUniform( "DieOn" ), 4, on );
+	shader.Set( "DieHalf", static_cast< float >( cube.inradius ) );
+	glUniform1iv( shader.FindUniform( "FaceValue" ), 6, faceValue );
+	shader.Set( "Point", crapsPoint );
+	shader.Set( "Pyramids", params[ PT_PYRAMIDS ] > 0.5f ? 1 : 0 );
+	shader.Set( "Celebrate", !p.idle && t >= p.playback.duration && p.outcome.win && since >= 0.0 && since < kBannerFor ? 1 : 0 );
+	//= mirrored in Shaders.cpp (kCraps's SP_ constants).
+	SetTextUniforms( shader, { "SIX", "NINE", "COME", "FIELD", "PASS LINE", "DON'T PASS BAR", "ON", "OFF", "2 3 4 9 10 11 12" } );
+}
+void JackpotPlugin::DrawLottery( FFGLShader& shader, double t, int width, int height )
+{
+	const lottery::Plan& p = play.lottery;
+	//A lottery machine is seen from in front: the same Tilt, 35 degrees lower.
+	const Camera camera    = SetCamera( shader, width, height, 0.40, 0.36, { 0.07, 0.0, 0.0 }, 35.0 );
+	const std::vector< lottery::BallState > balls = p.Balls( t );
+	//Rows: (x y z number), (quaternion w x y z), and the ball's disc on the
+	//frame (x y radius in pixels), which is how a pixel finds its few balls.
+	const int count = std::min( static_cast< int >( balls.size() ), kBallSlots );
+	std::vector< float > data( static_cast< size_t >( kBallSlots ) * 3 * 4, 0.0f );
+	for( int i = 0; i < count; ++i )
+	{
+		const lottery::BallState& b = balls[ static_cast< size_t >( i ) ];
+		float* row0 = &data[ static_cast< size_t >( i ) * 4 ];
+		float* row1 = &data[ ( static_cast< size_t >( kBallSlots ) + static_cast< size_t >( i ) ) * 4 ];
+		float* row2 = &data[ ( 2 * static_cast< size_t >( kBallSlots ) + static_cast< size_t >( i ) ) * 4 ];
+		row0[ 0 ] = static_cast< float >( b.x.x );
+		row0[ 1 ] = static_cast< float >( b.x.y );
+		row0[ 2 ] = static_cast< float >( b.x.z );
+		row0[ 3 ] = static_cast< float >( b.number );
+		row1[ 0 ] = static_cast< float >( b.q.w );
+		row1[ 1 ] = static_cast< float >( b.q.x );
+		row1[ 2 ] = static_cast< float >( b.q.y );
+		row1[ 3 ] = static_cast< float >( b.q.z );
+		const V3 at = camera.Project( b.x );
+		if( at.z > 0.0 )
+		{
+			//The disc's radius with room for the perspective's stretch at the
+			//frame's edge and the four rays' spread.
+			row2[ 0 ] = static_cast< float >( at.x );
+			row2[ 1 ] = static_cast< float >( at.y );
+			row2[ 2 ] = static_cast< float >( lottery::kBall * camera.focal / at.z * 0.5 * height * 1.25 + 2.0 );
+		}
+	}
+	glActiveTexture( GL_TEXTURE3 );
+	glBindTexture( GL_TEXTURE_2D, ballTexture );
+	glTexSubImage2D( GL_TEXTURE_2D, 0, 0, 0, kBallSlots, 3, GL_RGBA, GL_FLOAT, data.data() );
+	glActiveTexture( GL_TEXTURE0 );
+	shader.Set( "BallData", 3 );
+	shader.Set( "BallCount", count );
+	shader.Set( "Air", static_cast< float >( p.Air( t ) ) );
+	SetTextUniforms( shader, {} );
+}
+void JackpotPlugin::DrawShower( int width, int height, GLint hostFbo )
+{
+	const std::vector< Piece >& pieces = shower.Pieces();
+	const int count = std::min( static_cast< int >( pieces.size() ), Shower::kMaxPieces );
+	std::vector< float > data( static_cast< size_t >( count ) * 12 );
+	for( int i = 0; i < count; ++i )
+	{
+		const Piece& p = pieces[ static_cast< size_t >( i ) ];
+		float* d       = &data[ static_cast< size_t >( i ) * 12 ];
+		d[ 0 ]  = static_cast< float >( p.x.x );
+		d[ 1 ]  = static_cast< float >( p.x.y );
+		d[ 2 ]  = static_cast< float >( p.x.z );
+		d[ 3 ]  = static_cast< float >( p.radius );
+		d[ 4 ]  = static_cast< float >( p.q.w );
+		d[ 5 ]  = static_cast< float >( p.q.x );
+		d[ 6 ]  = static_cast< float >( p.q.y );
+		d[ 7 ]  = static_cast< float >( p.q.z );
+		d[ 8 ]  = static_cast< float >( p.half );
+		d[ 9 ]  = p.kind == PieceKind::Coin ? 1.0f : 0.0f;
+		d[ 10 ] = static_cast< float >( p.colour );
+		d[ 11 ] = static_cast< float >( std::clamp( p.fade, 0.0, 1.0 ) );
+	}
+	const GLint* hostViewport = nullptr;
+	GLint viewport[ 4 ];
+	glGetIntegerv( GL_VIEWPORT, viewport );
+	hostViewport = viewport;
+
+	//The pieces, into their own buffer with depth.
+	glBindFramebuffer( GL_FRAMEBUFFER, showerFbo );
+	glViewport( 0, 0, width, height );
+	glClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
+	glClearDepth( 1.0 );
+	glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+	glEnable( GL_DEPTH_TEST );
+	glDepthFunc( GL_LESS );
+	glDepthMask( GL_TRUE );
+	glDisable( GL_BLEND );
+	glBindBuffer( GL_ARRAY_BUFFER, showerVbo );
+	glBufferSubData( GL_ARRAY_BUFFER, 0, static_cast< GLsizeiptr >( data.size() * sizeof( float ) ), data.data() );
+	glBindBuffer( GL_ARRAY_BUFFER, 0 );
+	{
+		ScopedShaderBinding binding( showerProgram.GetGLID() );
+		float felt[ 3 ], accent[ 3 ];
+		linearColour( &params[ PT_FELT_R ], felt );
+		linearColour( &params[ PT_ACCENT_R ], accent );
+		showerProgram.Set( "Resolution", static_cast< float >( width ), static_cast< float >( height ) );
+		showerProgram.Set( "LightAngle", static_cast< float >( LightAngleFromParam( params[ PT_LIGHT_ANGLE ] ) * kPi / 180.0 ) );
+		showerProgram.Set( "Lights", std::clamp( params[ PT_LIGHTS ], 0.0f, 1.0f ) );
+		showerProgram.Set( "TestFlat", flat ? 1 : 0 );
+		showerProgram.Set( "Time", static_cast< float >( std::fmod( clock, 3600.0 ) ) );
+		//Seen from a little above (15 degrees), so a piece lying in the pile
+		//shows its face, lifted so the pile sits along the frame's foot.
+		const double a        = 15.0 * kPi / 180.0;
+		const float view[ 9 ] = { 1.0f, 0.0f, 0.0f,
+		                          0.0f, static_cast< float >( std::cos( a ) ), static_cast< float >( std::sin( a ) ),
+		                          0.0f, static_cast< float >( -std::sin( a ) ), static_cast< float >( std::cos( a ) ) };
+		glUniformMatrix3fv( showerProgram.FindUniform( "View" ), 1, GL_FALSE, view );
+		showerProgram.Set( "ViewLift", 0.05f );
+		glBindVertexArray( showerVao );
+		glDrawArraysInstanced( GL_TRIANGLE_STRIP, 0, 4, count );
+		glBindVertexArray( 0 );
+	}
+	glDisable( GL_DEPTH_TEST );
+
+	//Over the frame, premultiplied.
+	glBindFramebuffer( GL_FRAMEBUFFER, static_cast< GLuint >( hostFbo ) );
+	glViewport( hostViewport[ 0 ], hostViewport[ 1 ], hostViewport[ 2 ], hostViewport[ 3 ] );
+	glEnable( GL_BLEND );
+	glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
+	{
+		ScopedShaderBinding binding( compositeProgram.GetGLID() );
+		compositeProgram.Set( "Pieces", 0 );
+		compositeProgram.Set( "Strength", isEffect ? std::clamp( params[ PT_MIX ], 0.0f, 1.0f ) : 1.0f );
+		bindUnit( 0, showerColour );
+		quad.Draw();
+		unbindTextureUnits( 1 );
+	}
+	glDisable( GL_BLEND );
+}
 
 //---------------------------------------------------------------------------
 FFResult JackpotPlugin::ProcessOpenGL( ProcessOpenGLStruct* pgl )
@@ -1116,7 +1378,7 @@ FFResult JackpotPlugin::ProcessOpenGL( ProcessOpenGLStruct* pgl )
 		bindUnit( 2, symbolTexture );
 		glViewport( hostViewport[ 0 ], hostViewport[ 1 ], width, height );
 		quad.Draw();
-		unbindTextureUnits( 3 );
+		unbindTextureUnits( 4 );
 		glActiveTexture( GL_TEXTURE0 );
 	}
 

@@ -10,6 +10,24 @@ std::string Assemble( std::initializer_list< const char* > pieces )
 	return out;
 }
 
+extern const char* const kVersion;
+extern const char* const kQuadVertex;
+
+std::vector< Program > Programs()
+{
+	const std::string quad = Assemble( { kVersion, kQuadVertex } );
+	return {
+		{ "slots", quad, Assemble( { kVersion, kCommon, kText, kSlots, kSlotsMain } ) },
+		{ "roulette", quad, Assemble( { kVersion, kCommon, kText, kScene, kRoulette, kRouletteMain } ) },
+		{ "wheel", quad, Assemble( { kVersion, kCommon, kText, kWheel } ) },
+		{ "craps", quad, Assemble( { kVersion, kCommon, kText, kScene, kCraps, kCrapsMain } ) },
+		{ "lottery", quad, Assemble( { kVersion, kCommon, kText, kScene, kLottery, kLotteryMain } ) },
+		{ "blank", quad, Assemble( { kVersion, kCommon, kBlank } ) },
+		{ "shower", Assemble( { kVersion, kShowerVertex } ), Assemble( { kVersion, kCommon, kText, kScene, kShowerFragment } ) },
+		{ "composite", quad, Assemble( { kVersion, kComposite } ) },
+	};
+}
+
 const char* const kVersion = "#version 410 core\n";
 
 const char* const kQuadVertex = R"(
@@ -140,9 +158,12 @@ vec4 over( vec4 top, vec4 under )
 	return top + under * ( 1.0 - top.a );
 }
 
+//Zero coverage leaves `under` exactly as it was, whatever `colour` holds: a
+//highlight evaluated far from its shape can overflow (pow of a huge "normal"),
+//and infinity times zero is NaN, which drew black wedges twice.
 vec4 layer( vec4 under, vec3 colour, float coverage )
 {
-	return over( vec4( colour * coverage, coverage ), under );
+	return coverage > 0.0 ? over( vec4( colour * coverage, coverage ), under ) : under;
 }
 
 //The display transfer: the plugin lights in linear and writes display values.
@@ -285,6 +306,28 @@ float textDistance( int span, vec2 p, float h )
 		pen += GlyphAdv[ g ];
 	}
 	return best * h;
+}
+
+//A string stacked one character under another, each upright, centred across
+//x = 0, the first character's cell starting at y = 0 and the rest below it,
+//`h` tall each with `lead` between.
+float stackedDistance( int span, vec2 p, float h, float lead )
+{
+	ivec2 s    = Span[ span ];
+	float best = -1.0;
+	int row    = int( floor( -p.y / ( h * lead ) ) );
+	for( int k = row - 1; k <= row + 1; ++k )
+	{
+		if( k < 0 || k >= s.y )
+			continue;
+		int g = Chars[ s.x + k ];
+		if( g < 0 )
+			continue;
+		float cy = -( float( k ) + 0.5 ) * h * lead;
+		vec2 q   = vec2( p.x / h + 0.5 * ( GlyphBox[ g ].z + GlyphBox[ g ].w ), ( p.y - cy ) / h + 0.5 );
+		best     = max( best, glyphDistance( g, q ) * h );
+	}
+	return best;
 }
 
 //A whole number centred on the origin, `h` tall (digits only, up to 4).
@@ -673,15 +716,1554 @@ void main()
 }
 )";
 
-//PLACEHOLDERS -- replaced game by game.
-const char* const kRoulette      = "";
-const char* const kRouletteMain  = R"(void main(){ fragColour = finish( backdrop( canvasPoint( gl_FragCoord.xy ) ) ); })";
-const char* const kWheel         = R"(void main(){ fragColour = finish( backdrop( canvasPoint( gl_FragCoord.xy ) ) ); })";
-const char* const kCraps         = "";
-const char* const kCrapsMain     = R"(void main(){ fragColour = finish( backdrop( canvasPoint( gl_FragCoord.xy ) ) ); })";
-const char* const kLottery       = R"(void main(){ fragColour = finish( backdrop( canvasPoint( gl_FragCoord.xy ) ) ); })";
-const char* const kShowerVertex  = R"(layout( location = 0 ) in vec2 corner; void main(){ gl_Position = vec4( corner, 0.0, 1.0 ); })";
-const char* const kShowerFragment = R"(void main(){ fragColour = vec4( 0.0 ); })";
-const char* const kComposite     = R"(in vec2 uv; out vec4 fragColour; void main(){ fragColour = vec4( 0.0 ); })";
+//===========================================================================
+// The 3D games' shared pieces: the camera, the light, the primitives.
+// World axes: z up, the camera to the south (-y) looking north and down.
+//===========================================================================
+const char* const kScene = R"(
+uniform vec3  CamPos;
+uniform vec3  CamRight;
+uniform vec3  CamUp;
+uniform vec3  CamForward;
+uniform float CamFocal;   //1 / tan( half the vertical field of view )
+uniform int   Samples;    //1 or 4 rays per pixel
+
+//The ray through a point of the frame (in pixels).
+vec3 cameraRay( vec2 fragment )
+{
+	vec2 s = ( 2.0 * fragment - Resolution ) / Resolution.y;
+	return normalize( CamForward * CamFocal + CamRight * s.x + CamUp * s.y );
+}
+
+//Toward the key light: Light Angle round, 50 degrees up.
+vec3 keyLight()
+{
+	float e = 0.87266;
+	return normalize( vec3( cos( LightAngle ) * cos( e ), sin( LightAngle ) * cos( e ), sin( e ) ) );
+}
+
+//The rotated-grid offsets for four rays (or the centre, for one).
+vec2 sampleOffset( int i )
+{
+	if( Samples <= 1 )
+		return vec2( 0.0 );
+	vec2 o[ 4 ] = vec2[ 4 ]( vec2( 0.125, 0.375 ), vec2( 0.375, -0.125 ), vec2( -0.125, -0.375 ), vec2( -0.375, 0.125 ) );
+	return o[ i ];
+}
+
+//-- primitives: the nearest t > 0, or -1 --------------------------------------
+float hitSphere( vec3 ro, vec3 rd, vec3 c, float r )
+{
+	vec3 oc = ro - c;
+	float b = dot( oc, rd );
+	float h = b * b - ( dot( oc, oc ) - r * r );
+	if( h < 0.0 )
+		return -1.0;
+	float t = -b - sqrt( h );
+	return t > 0.0 ? t : -1.0;
+}
+
+//A capsule from a to b, radius r (Quilez).
+float hitCapsule( vec3 ro, vec3 rd, vec3 a, vec3 b, float r )
+{
+	vec3 ba  = b - a;
+	vec3 oa  = ro - a;
+	float baba = dot( ba, ba );
+	float bard = dot( ba, rd );
+	float baoa = dot( ba, oa );
+	float rdoa = dot( rd, oa );
+	float oaoa = dot( oa, oa );
+	float qa   = baba - bard * bard;
+	float qb   = baba * rdoa - baoa * bard;
+	float qc   = baba * oaoa - baoa * baoa - r * r * baba;
+	float h    = qb * qb - qa * qc;
+	if( h >= 0.0 )
+	{
+		float t = ( -qb - sqrt( h ) ) / qa;
+		float y = baoa + t * bard;
+		if( y > 0.0 && y < baba )
+			return t > 0.0 ? t : -1.0;
+		vec3 oc = ( y <= 0.0 ) ? oa : ro - b;
+		qb      = dot( rd, oc );
+		qc      = dot( oc, oc ) - r * r;
+		h       = qb * qb - qc;
+		if( h > 0.0 )
+		{
+			t = -qb - sqrt( h );
+			return t > 0.0 ? t : -1.0;
+		}
+	}
+	return -1.0;
+}
+
+//A capped cylinder from a to b, radius r (Quilez): (t, normal), t < 0 none.
+vec4 hitCylinder( vec3 ro, vec3 rd, vec3 a, vec3 b, float r )
+{
+	vec3 ca    = b - a;
+	vec3 oc    = ro - a;
+	float caca = dot( ca, ca );
+	float card = dot( ca, rd );
+	float caoc = dot( ca, oc );
+	float qa   = caca - card * card;
+	float qb   = caca * dot( oc, rd ) - caoc * card;
+	float qc   = caca * dot( oc, oc ) - caoc * caoc - r * r * caca;
+	float h    = qb * qb - qa * qc;
+	if( h < 0.0 )
+		return vec4( -1.0 );
+	h       = sqrt( h );
+	float t = ( -qb - h ) / qa;
+	float y = caoc + t * card;
+	if( y > 0.0 && y < caca && t > 0.0 )
+		return vec4( t, ( oc + t * rd - ca * y / caca ) / r );
+	t = ( ( y < 0.0 ? 0.0 : caca ) - caoc ) / card;
+	if( abs( qb + qa * t ) < h && t > 0.0 )
+		return vec4( t, ca * sign( y ) / sqrt( caca ) );
+	return vec4( -1.0 );
+}
+
+vec3 capsuleNormal( vec3 p, vec3 a, vec3 b, float r )
+{
+	vec3 ba = b - a;
+	float h = clamp( dot( p - a, ba ) / dot( ba, ba ), 0.0, 1.0 );
+	return ( p - a - ba * h ) / r;
+}
+
+//A box centred at the origin of its own frame, half-sizes h: (t, normal).
+vec4 hitBox( vec3 ro, vec3 rd, vec3 h )
+{
+	vec3 m  = 1.0 / rd;
+	vec3 n  = m * ro;
+	vec3 k  = abs( m ) * h;
+	vec3 t1 = -n - k;
+	vec3 t2 = -n + k;
+	float tN = max( max( t1.x, t1.y ), t1.z );
+	float tF = min( min( t2.x, t2.y ), t2.z );
+	if( tN > tF || tF < 0.0 || tN < 0.0 )
+		return vec4( -1.0 );
+	vec3 nor = -sign( rd ) * step( t1.yzx, t1.xyz ) * step( t1.zxy, t1.xyz );
+	return vec4( tN, nor );
+}
+
+//How much a sphere shadows a point toward the light, softly (Quilez).
+float sphereShadow( vec3 ro, vec3 rd, vec3 c, float r, float k )
+{
+	vec3 oc = ro - c;
+	float b = dot( oc, rd );
+	float h = b * b - ( dot( oc, oc ) - r * r );
+	return b > 0.0 ? 1.0 : smoothstep( 0.0, 1.0, h * k / b );
+}
+
+//Ambient occlusion of a sphere on a surface (Quilez).
+float sphereOcclusion( vec3 p, vec3 n, vec3 c, float r )
+{
+	vec3 d  = c - p;
+	float l = length( d );
+	return clamp( dot( n, d ) * r * r / ( l * l * l ), 0.0, 1.0 );
+}
+
+//Varnished wood, its grain running round the wheel.
+vec3 woodColour( vec2 polar, vec3 base )
+{
+	float g    = fbm2( vec2( polar.x * 140.0, polar.y * 2.0 ) );
+	float ring = 0.5 + 0.5 * sin( polar.x * 900.0 + g * 9.0 );
+	return base * ( 0.72 + 0.28 * ring ) * ( 0.85 + 0.3 * g );
+}
+
+//Lit: the key light, a cool fill from the opposite side, a highlight with
+//Fresnel, and the studio in polished things.
+vec3 shadeSurface( vec3 albedo, vec3 n, vec3 rd, float shine, float shadow, float ao )
+{
+	vec3 L    = keyLight();
+	vec3 F    = normalize( vec3( -L.x, -L.y, 0.6 ) );
+	float dif = max( dot( n, L ), 0.0 ) * shadow;
+	float fil = max( dot( n, F ), 0.0 ) * 0.25;
+	vec3 h    = normalize( L - rd );
+	float spe = pow( max( dot( n, h ), 0.0 ), mix( 16.0, 140.0, shine ) ) * shine * shadow;
+	float fre = pow( 1.0 - max( dot( n, -rd ), 0.0 ), 5.0 );
+	vec3 env  = studio( reflect( rd, n ).xzy ) * ( 0.04 + 0.5 * fre ) * shine;
+	return albedo * ( 0.18 * ao + 0.95 * dif + fil * ao ) + vec3( spe ) * 1.6 + env * ao;
+}
+)";
+
+//===========================================================================
+// Roulette: the wheel. The bowl is a surface of revolution made of cones, each
+// intersected exactly; the frets, diamonds, turret and ball are primitives.
+//===========================================================================
+const char* const kRoulette = R"(
+//= mirrored in Roulette.h / Roulette.cpp (kProfile, the constants). The
+//physics' profile is vertices 1..8; 0 (the turret's dome) and 9.. (the lip's
+//drawn top and the bowl's rim) are drawn only. The physics' lip runs to 0.15 m;
+//it is DRAWN to 0.08, above anything the ball reaches (jptest --roulette).
+const float BALL_R     = 0.0095;
+const float LIP        = 0.395;
+const float TRACK_IN   = 0.335;
+const float ROTOR_OUT  = 0.255;
+const float POCKET_OUT = 0.232;
+const float POCKET_IN  = 0.195;
+const float DIAMOND_R  = 0.300;
+const float STEP_W     = 0.004;
+const float POCKET_D   = 0.014;
+const float FRET_H     = 0.014;
+const float FRET_HALF  = 0.001;
+const float APRON_Z    = 0.00575;   //0.25 * ( ROTOR_OUT - POCKET_OUT )
+const float STATOR_Z   = 0.034868;  //+ tan 20 * ( TRACK_IN - ROTOR_OUT )
+const float TRACK_Z    = 0.049828;  //+ tan 14 * ( LIP - TRACK_IN )
+const float TABLE_Z    = -0.06;
+const int NV = 15;
+
+uniform float RingAngle;     //the numbered ring (and the frets), rad
+uniform int   Pockets;       //37 or 38
+uniform int   PocketNumber[ 38 ];
+uniform int   Deflectors;
+uniform vec4  BallAt;        //xyz, w > 0 when the ball is on the wheel
+uniform int   Highlight;     //the pocket the ball rests in, lit; -1 none
+
+vec2 profileVertex( int i )
+{
+	vec2 v[ NV ] = vec2[ NV ]( vec2( 0.0, 0.045 ), vec2( 0.120, 0.0249 ), vec2( POCKET_IN - STEP_W, 0.0 ),
+	                           vec2( POCKET_IN, -POCKET_D ), vec2( POCKET_OUT - STEP_W, -POCKET_D ), vec2( POCKET_OUT, 0.0 ),
+	                           vec2( ROTOR_OUT, APRON_Z ), vec2( TRACK_IN, STATOR_Z ), vec2( LIP, TRACK_Z ),
+	                           vec2( LIP, 0.08 ), vec2( 0.43, 0.08 ), vec2( 0.445, 0.074 ), vec2( 0.455, 0.055 ),
+	                           vec2( 0.46, 0.035 ), vec2( 0.46, TABLE_Z ) );
+	return v[ i ];
+}
+
+int numberColour( int n )
+{
+	if( n == 0 || n == 37 )
+		return 0;
+	int red[ 18 ] = int[ 18 ]( 1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36 );
+	for( int i = 0; i < 18; ++i )
+		if( red[ i ] == n )
+			return 1;
+	return 2;
+}
+
+vec3 pocketPaint( int n )
+{
+	int c = numberColour( n );
+	return c == 0 ? toLinear( vec3( 0.05, 0.42, 0.16 ) ) : c == 1 ? toLinear( vec3( 0.66, 0.05, 0.05 ) ) : toLinear( vec3( 0.045, 0.04, 0.04 ) );
+}
+
+//The bowl: the nearest cone (t, segment), each segment a frustum of the
+//profile between two vertices.
+vec2 hitBowl( vec3 ro, vec3 rd )
+{
+	float best = 1e9;
+	float seg  = -1.0;
+	for( int i = 0; i + 1 < NV; ++i )
+	{
+		vec2 a  = profileVertex( i ), b = profileVertex( i + 1 );
+		float dr = b.x - a.x, dz = b.y - a.y;
+		if( abs( dz ) < 1e-7 )
+		{
+			//A flat annulus.
+			if( abs( rd.z ) < 1e-7 )
+				continue;
+			float t = ( a.y - ro.z ) / rd.z;
+			vec2 q  = ro.xy + rd.xy * t;
+			float r = length( q );
+			if( t > 1e-4 && t < best && r >= min( a.x, b.x ) && r <= max( a.x, b.x ) )
+			{
+				best = t;
+				seg  = float( i );
+			}
+			continue;
+		}
+		//r dz = a.r dz + ( z - a.z ) dr, squared.
+		float P  = a.x * dz + ( ro.z - a.y ) * dr;
+		float Q  = rd.z * dr;
+		float dz2 = dz * dz;
+		float A  = dz2 * dot( rd.xy, rd.xy ) - Q * Q;
+		float B  = 2.0 * ( dz2 * dot( ro.xy, rd.xy ) - P * Q );
+		float C  = dz2 * dot( ro.xy, ro.xy ) - P * P;
+		float h  = B * B - 4.0 * A * C;
+		if( h < 0.0 || abs( A ) < 1e-12 )
+			continue;
+		h = sqrt( h );
+		for( int k = 0; k < 2; ++k )
+		{
+			float t = ( -B + ( k == 0 ? -h : h ) ) / ( 2.0 * A );
+			if( t <= 1e-4 || t >= best )
+				continue;
+			float z  = ro.z + rd.z * t;
+			float rc = ( P + Q * t ) / dz;
+			if( rc < 0.0 || z < min( a.y, b.y ) - 1e-6 || z > max( a.y, b.y ) + 1e-6 )
+				continue;
+			best = t;
+			seg  = float( i );
+		}
+	}
+	return vec2( best, seg );
+}
+
+//The profile's normal on segment s, at a point.
+vec3 bowlNormal( int s, vec3 p )
+{
+	vec2 a = profileVertex( s ), b = profileVertex( s + 1 );
+	vec2 n = normalize( vec2( -( b.y - a.y ), b.x - a.x ) );
+	float r = max( length( p.xy ), 1e-6 );
+	return normalize( vec3( n.x * p.xy / r, n.y ) );
+}
+
+//The frets near a ray's path through the pocket band: (t, fret index, normal).
+//The frets are boxes in their own radial frames at RingAngle + (k + 1/2) pocket,
+//from the inner step's foot to the outer step's foot (Roulette.cpp).
+vec4 hitFrets( vec3 ro, vec3 rd, float tMax, out vec3 normal )
+{
+	float pocket = 2.0 * PI / float( Pockets );
+	float zTop   = -POCKET_D + FRET_H;
+	//Where the ray is in the fret band: the angles at its ends there.
+	float t0 = rd.z < 0.0 ? max( ( zTop - ro.z ) / rd.z, 0.0 ) : 0.0;
+	float t1 = min( tMax, rd.z < 0.0 ? ( -POCKET_D - ro.z ) / rd.z : tMax );
+	if( t1 <= t0 )
+		return vec4( -1.0 );
+	vec3 p0 = ro + rd * t0, p1 = ro + rd * t1;
+	float a0 = ( atan( p0.y, p0.x ) - RingAngle ) / pocket - 0.5;
+	float a1 = ( atan( p1.y, p1.x ) - RingAngle ) / pocket - 0.5;
+	//The shorter way round between them.
+	float span = a1 - a0;
+	span -= float( Pockets ) * floor( span / float( Pockets ) + 0.5 );
+	float lo = floor( min( a0, a0 + span ) ) - 1.0;
+	int count = min( int( abs( span ) ) + 3, 8 );
+	vec4 best = vec4( -1.0 );
+	float bestT = 1e9;
+	for( int j = 0; j < count; ++j )
+	{
+		float k  = lo + float( j );
+		float fa = RingAngle + ( k + 0.5 ) * pocket;
+		vec2 ax  = vec2( cos( fa ), sin( fa ) );
+		vec2 ay  = vec2( -ax.y, ax.x );
+		//The box's frame: x radial, y across, z up; centred on the fret.
+		vec3 c   = vec3( ax * ( 0.5 * ( POCKET_IN + POCKET_OUT ) - STEP_W ), 0.5 * ( zTop - POCKET_D ) );
+		vec3 o   = ro - c;
+		vec3 lo3 = vec3( dot( o.xy, ax ), dot( o.xy, ay ), o.z );
+		vec3 ld  = vec3( dot( rd.xy, ax ), dot( rd.xy, ay ), rd.z );
+		vec4 h   = hitBox( lo3, ld, vec3( 0.5 * ( POCKET_OUT - POCKET_IN ), FRET_HALF, 0.5 * FRET_H ) );
+		if( h.x > 0.0 && h.x < bestT )
+		{
+			bestT  = h.x;
+			normal = vec3( ax * h.y + ay * h.z, h.w );
+			best   = vec4( h.x, k, 0.0, 0.0 );
+		}
+	}
+	return best;
+}
+)";
+
+const char* const kRouletteMain = R"(
+const float DIAMOND_Z = 0.0251287; //Height( DIAMOND_R ) + 0.003, mirrored in Roulette.cpp
+
+//The diamonds: capsules on the stator, alternately along and across.
+void diamondEnds( int i, out vec3 a, out vec3 b )
+{
+	float ang = ( float( i ) + 0.5 ) * 2.0 * PI / 8.0;
+	vec3 c    = vec3( DIAMOND_R * cos( ang ), DIAMOND_R * sin( ang ), DIAMOND_Z );
+	vec3 axis = ( i % 2 == 0 ) ? vec3( cos( ang ), sin( ang ), 0.0 ) : vec3( -sin( ang ), cos( ang ), 0.0 );
+	a = c - axis * 0.010;
+	b = c + axis * 0.010;
+}
+
+//The turret: a spindle, a cap and four arms, turning with the ring. Returns
+//the nearest t and its normal.
+float hitTurret( vec3 ro, vec3 rd, out vec3 n )
+{
+	float best = 1e9;
+	vec3 a = vec3( 0.0, 0.0, 0.03 ), b = vec3( 0.0, 0.0, 0.082 );
+	float t = hitCapsule( ro, rd, a, b, 0.011 );
+	if( t > 0.0 && t < best )
+	{
+		best = t;
+		n    = capsuleNormal( ro + rd * t, a, b, 0.011 );
+	}
+	vec3 cap = vec3( 0.0, 0.0, 0.092 );
+	t        = hitSphere( ro, rd, cap, 0.016 );
+	if( t > 0.0 && t < best )
+	{
+		best = t;
+		n    = ( ro + rd * t - cap ) / 0.016;
+	}
+	for( int k = 0; k < 4; ++k )
+	{
+		float ang = RingAngle + ( float( k ) + 0.5 ) * 0.5 * PI;
+		vec3 tip  = vec3( 0.074 * cos( ang ), 0.074 * sin( ang ), 0.074 );
+		vec3 root = vec3( 0.0, 0.0, 0.074 );
+		t         = hitCapsule( ro, rd, root, tip, 0.0045 );
+		if( t > 0.0 && t < best )
+		{
+			best = t;
+			n    = capsuleNormal( ro + rd * t, root, tip, 0.0045 );
+		}
+		t = hitSphere( ro, rd, tip, 0.0095 );
+		if( t > 0.0 && t < best )
+		{
+			best = t;
+			n    = ( ro + rd * t - tip ) / 0.0095;
+		}
+	}
+	return best;
+}
+
+//Which numbered pocket an angle is in, and where across it (-1/2 .. 1/2).
+int pocketAt( float phi, out float across )
+{
+	float u = ( phi - RingAngle ) / ( 2.0 * PI / float( Pockets ) );
+	float k = floor( u + 0.5 );
+	across  = u - k;
+	return int( mod( k, float( Pockets ) ) );
+}
+
+//A pocket's number printed at local (x across, y outward) in metres.
+float printedNumber( int n, vec2 q, float h )
+{
+	if( n != 37 )
+		return numberDistance( n, q, h );
+	float adv = GlyphAdv[ 0 ] * h * 0.5;
+	return max( numberDistance( 0, q + vec2( adv, 0.0 ), h ), numberDistance( 0, q - vec2( adv, 0.0 ), h ) );
+}
+
+const int K_NONE = 0, K_BOWL = 1, K_FRET = 2, K_DIAMOND = 3, K_TURRET = 4, K_BALL = 5, K_TABLE = 6;
+
+vec4 shadeRoulette( vec3 ro, vec3 rd )
+{
+	vec2 bowl = hitBowl( ro, rd );
+	float t   = bowl.x;
+	int kind  = bowl.y >= 0.0 ? K_BOWL : K_NONE;
+	int seg   = int( bowl.y );
+	vec3 n    = vec3( 0.0, 0.0, 1.0 );
+	if( kind == K_BOWL )
+		n = bowlNormal( seg, ro + rd * t );
+
+	if( TestFlat != 2 )
+	{
+		vec3 fn;
+		vec4 f = hitFrets( ro, rd, t, fn );
+		if( f.x > 0.0 && f.x < t )
+		{
+			t    = f.x;
+			kind = K_FRET;
+			n    = fn;
+		}
+		if( Deflectors == 1 )
+			for( int i = 0; i < 8; ++i )
+			{
+				vec3 a, b;
+				diamondEnds( i, a, b );
+				float d = hitCapsule( ro, rd, a, b, 0.006 );
+				if( d > 0.0 && d < t )
+				{
+					t    = d;
+					kind = K_DIAMOND;
+					n    = capsuleNormal( ro + rd * d, a, b, 0.006 );
+				}
+			}
+		vec3 tn;
+		float tt = hitTurret( ro, rd, tn );
+		if( tt < t )
+		{
+			t    = tt;
+			kind = K_TURRET;
+			n    = tn;
+		}
+		if( BallAt.w > 0.0 )
+		{
+			float bt = hitSphere( ro, rd, BallAt.xyz, BALL_R );
+			if( bt > 0.0 && bt < t )
+			{
+				t    = bt;
+				kind = K_BALL;
+				n    = ( ro + rd * bt - BallAt.xyz ) / BALL_R;
+			}
+		}
+	}
+	if( kind == K_NONE && BackdropKind == BACK_FELT && rd.z < 0.0 )
+	{
+		t    = ( TABLE_Z - ro.z ) / rd.z;
+		kind = K_TABLE;
+	}
+	if( kind == K_NONE )
+		return vec4( 0.0 );
+
+	vec3 p     = ro + rd * t;
+	float r    = length( p.xy );
+	float phi  = atan( p.y, p.x );
+	vec3 albedo = vec3( 0.5 );
+	float shine = 0.3;
+	float ao    = 1.0;
+	bool glow   = false;
+
+	//The id picture (jptest): the number painted where each ray lands, in G.
+	if( TestFlat == 2 )
+	{
+		if( kind == K_BOWL && seg >= 2 && seg <= 5 )
+		{
+			float across;
+			int j = pocketAt( phi, across );
+			return vec4( float( j ) / 64.0, float( PocketNumber[ j ] ) / 64.0, float( seg ) / 16.0, 1.0 );
+		}
+		return vec4( 0.0, 0.0, 0.0, 1.0 );
+	}
+
+	if( kind == K_BOWL )
+	{
+		vec2 polarRotor = vec2( r, phi - RingAngle );
+		if( seg <= 1 )
+		{
+			albedo = woodColour( polarRotor, toLinear( vec3( 0.62, 0.36, 0.16 ) ) );
+			shine  = 0.75;
+		}
+		else if( seg <= 4 )
+		{
+			float across;
+			int j  = pocketAt( phi, across );
+			albedo = pocketPaint( PocketNumber[ j ] ) * 0.85;
+			shine  = 0.35;
+			//Darker into the corners where the floor meets the steps and frets.
+			float wall = min( min( r - POCKET_IN, POCKET_OUT - STEP_W - r ), ( 0.5 - abs( across ) ) * r * 2.0 * PI / float( Pockets ) );
+			ao         = 0.45 + 0.55 * smoothstep( 0.0, 0.008, wall );
+			glow       = j == Highlight;
+		}
+		else if( seg == 5 )
+		{
+			float across;
+			int j     = pocketAt( phi, across );
+			int num   = PocketNumber[ j ];
+			albedo    = pocketPaint( num );
+			shine     = 0.6;
+			float pkt = 2.0 * PI / float( Pockets );
+			float gap = ( 0.5 - abs( across ) ) * pkt * r;
+			vec3 gold = toLinear( vec3( 0.95, 0.75, 0.32 ) );
+			float pxw = t / ( CamFocal * Resolution.y * 0.5 );
+			albedo    = mix( albedo, gold, cover( gap - 0.0007, pxw ) );
+			vec2 q    = vec2( -across * pkt * r, r - 0.5 * ( POCKET_OUT + ROTOR_OUT ) );
+			float ink = printedNumber( num, q, 0.0105 );
+			albedo    = mix( albedo, toLinear( vec3( 0.97, 0.95, 0.88 ) ), cover( -ink, pxw ) );
+			glow      = j == Highlight;
+		}
+		else
+		{
+			vec3 base = seg == 6 ? toLinear( vec3( 0.28, 0.13, 0.06 ) ) : toLinear( vec3( 0.42, 0.2, 0.08 ) );
+			albedo    = woodColour( vec2( r, phi ), base );
+			shine     = seg == 7 ? 0.9 : 0.7;
+		}
+	}
+	else if( kind == K_FRET )
+	{
+		albedo = toLinear( vec3( 0.85, 0.82, 0.76 ) );
+		shine  = 1.0;
+	}
+	else if( kind == K_DIAMOND || kind == K_TURRET )
+	{
+		albedo = toLinear( vec3( 0.86, 0.84, 0.8 ) );
+		shine  = 1.0;
+	}
+	else if( kind == K_BALL )
+	{
+		albedo = toLinear( vec3( 0.95, 0.93, 0.88 ) );
+		shine  = 0.9;
+	}
+	else
+	{
+		albedo = Felt * ( 0.85 + fbm2( p.xy * 900.0 ) * 0.08 + fbm2( p.xy * 40.0 ) * 0.06 );
+		shine  = 0.0;
+		//The wheel's contact shadow on the cloth.
+		ao     = 0.35 + 0.65 * smoothstep( 0.46, 0.56, r );
+	}
+
+	if( TestFlat == 1 )
+		return vec4( albedo, 1.0 );
+
+	vec3 L       = keyLight();
+	vec3 off     = p + n * 2e-4;
+	float shadow = hitBowl( off, L ).x < 1e8 ? 0.0 : 1.0;
+	if( BallAt.w > 0.0 && kind != K_BALL )
+	{
+		shadow *= sphereShadow( off, L, BallAt.xyz, BALL_R, 6.0 );
+		ao     *= 1.0 - 0.8 * sphereOcclusion( p, n, BallAt.xyz, BALL_R );
+	}
+	vec3 c = shadeSurface( albedo, n, rd, shine, shadow, ao );
+	if( glow )
+		c += albedo * 0.6 * Lights * ( 0.75 + 0.25 * sin( Time * 6.0 ) );
+	return vec4( c, 1.0 );
+}
+
+void main()
+{
+	vec2 p   = canvasPoint( gl_FragCoord.xy );
+	int n    = Samples <= 1 ? 1 : 4;
+	vec4 sum = vec4( 0.0 );
+	for( int i = 0; i < n; ++i )
+		sum += shadeRoulette( CamPos, cameraRay( gl_FragCoord.xy + sampleOffset( i ) ) );
+	vec4 game = sum / float( n );
+	if( TestFlat == 2 )
+	{
+		fragColour = game;
+		return;
+	}
+	fragColour = finish( over( game, backdrop( p ) ) );
+}
+)";
+
+//===========================================================================
+// The money wheel (Big Six), face on.
+//===========================================================================
+const char* const kWheel = R"(
+//= mirrored in MoneyWheel.h.
+const int SEGMENTS   = 54;
+const float RIM      = 0.90;
+const float PEG_R    = 0.86;
+const float PEG_SIZE = 0.008;
+const float PIVOT_Y  = 0.96;
+const float CLAP_LEN = 0.115;
+const float CLAP_HALF = 0.004;
+
+//Spans, = mirrored in Jackpot.cpp (DrawWheel).
+const int SPAN_1 = 0, SPAN_2 = 1, SPAN_5 = 2, SPAN_10 = 3, SPAN_20 = 4, SPAN_JOKER = 5, SPAN_LOGO = 6;
+
+uniform float WheelAngle;    //the painted wheel (and its pegs), rad
+uniform float ClapperAngle;  //rad, positive swings the tip toward +x
+uniform int   Layout[ 54 ];
+uniform int   Highlight;     //the segment under the clapper at rest, or -1
+uniform int   Celebrate;
+
+const float SCALE  = 0.46;   //canvas units per metre
+const vec2 CENTRE  = vec2( 0.0, -0.035 );
+
+vec3 valueColour( int v )
+{
+	if( v == 1 )  return toLinear( vec3( 0.96, 0.82, 0.18 ) );
+	if( v == 2 )  return toLinear( vec3( 0.16, 0.42, 0.86 ) );
+	if( v == 5 )  return toLinear( vec3( 0.62, 0.22, 0.72 ) );
+	if( v == 10 ) return toLinear( vec3( 0.16, 0.66, 0.30 ) );
+	if( v == 20 ) return toLinear( vec3( 0.95, 0.42, 0.10 ) );
+	return toLinear( vec3( 0.06, 0.05, 0.05 ) );
+}
+
+int valueSpan( int v )
+{
+	return v == 1 ? SPAN_1 : v == 2 ? SPAN_2 : v == 5 ? SPAN_5 : v == 10 ? SPAN_10 : v == 20 ? SPAN_20 : v == 40 ? SPAN_JOKER : SPAN_LOGO;
+}
+
+//A five-pointed star of outer radius r (Quilez).
+float sdStar5( vec2 p, float r, float rf )
+{
+	const vec2 k1 = vec2( 0.809016994375, -0.587785252292 );
+	const vec2 k2 = vec2( -k1.x, k1.y );
+	p.x = abs( p.x );
+	p -= 2.0 * max( dot( k1, p ), 0.0 ) * k1;
+	p -= 2.0 * max( dot( k2, p ), 0.0 ) * k2;
+	p.x = abs( p.x );
+	p.y -= r;
+	vec2 ba = rf * vec2( -k1.y, k1.x ) - vec2( 0.0, 1.0 );
+	float h = clamp( dot( p, ba ) / dot( ba, ba ), 0.0, r );
+	return length( p - ba * h ) * sign( p.y * ba.x - p.x * ba.y );
+}
+
+vec4 drawWheel( vec2 p, float px )
+{
+	vec4 col = vec4( 0.0 );
+	vec2 m   = ( p - CENTRE ) / SCALE;  //metres, the hub at the origin
+	float mpx = px / SCALE;
+	float r  = length( m );
+	vec3 L2  = normalize( vec3( cos( LightAngle ), sin( LightAngle ), 1.4 ) );
+
+	//-- the stand: a post down from the hub and a foot ------------------------
+	float post = sdBox( m - vec2( 0.0, -0.75 ), vec2( 0.07, 0.75 ), 0.01 );
+	col = layer( col, toLinear( vec3( 0.22, 0.12, 0.06 ) ) * ( TestFlat == 1 ? 1.0 : 0.8 + 0.4 * smoothstep( 0.07, -0.07, m.x ) ), cover( post, mpx ) );
+
+	//-- the rim: a lacquered ring with a chase of lamps ------------------------------
+	float rim = abs( r - 0.955 ) - 0.065;
+	if( rim < mpx * 2.0 )
+	{
+		vec3 lacquer = Accent * ( 0.6 + 0.4 * smoothstep( -0.9, 0.9, m.y ) );
+		vec3 n       = normalize( vec3( m / max( r, 1e-4 ) * ( r - 0.955 ) / 0.065 * 0.8, 1.0 ) );
+		if( TestFlat == 0 )
+			lacquer = lacquer * ( 0.35 + 0.75 * max( dot( n, L2 ), 0.0 ) ) + vec3( 0.6 ) * pow( max( dot( reflect( -L2, n ), vec3( 0.0, 0.0, 1.0 ) ), 0.0 ), 40.0 );
+		col = layer( col, lacquer, cover( rim, mpx ) );
+		//The lamps: 36 round the rim.
+		float a   = atan( m.y, m.x );
+		float u   = a / ( 2.0 * PI ) * 36.0;
+		float k   = floor( u + 0.5 );
+		vec2 c    = 0.955 * vec2( cos( k * 2.0 * PI / 36.0 ), sin( k * 2.0 * PI / 36.0 ) );
+		float d   = length( m - c );
+		int i     = int( mod( k, 36.0 ) );
+		float on  = TestFlat == 1 ? 0.0 : Lights * ( Celebrate > 0 ? float( ( i + int( Time * 8.0 ) ) % 2 == 0 ) : float( ( i + int( Time * 3.0 ) ) % 3 == 0 ) );
+		vec3 warm = toLinear( vec3( 1.0, 0.86, 0.5 ) );
+		col       = layer( col, mix( warm * 0.2, warm * 3.0, on ), cover( d - 0.022, mpx ) );
+		col.rgb  += warm * on * 0.35 * exp( -d * d / 0.0016 ) * col.a;
+	}
+
+	//-- the face: 54 segments -------------------------------------------------------
+	float face = r - 0.89;
+	if( face < mpx * 2.0 )
+	{
+		float seg = 2.0 * PI / float( SEGMENTS );
+		float u   = ( atan( m.y, m.x ) - WheelAngle ) / seg;
+		float k   = floor( u );
+		float f   = u - k;
+		int j     = int( mod( k, float( SEGMENTS ) ) );
+		int v     = Layout[ j ];
+		vec3 c    = valueColour( v );
+		//The id picture (jptest): the segment and its value, nothing else.
+		if( TestFlat == 2 )
+			return layer( col, vec3( float( j ) / 64.0, float( v ) / 64.0, 0.25 ), cover( face, mpx ) );
+		//The segment's frame: x outward along its middle, y round.
+		float ac  = WheelAngle + ( k + 0.5 ) * seg;
+		vec2 er   = vec2( cos( ac ), sin( ac ) );
+		vec2 et   = vec2( -er.y, er.x );
+		vec2 q    = vec2( dot( m, er ), dot( m, et ) );
+		//Gold dividers between segments, and a gold band inside the pegs.
+		float div = ( 0.5 - abs( f - 0.5 ) ) * seg * r - 0.0035;
+		float bandO = abs( r - 0.80 ) - 0.006;
+		float bandI = abs( r - 0.28 ) - 0.006;
+		vec3 gold = toLinear( vec3( 0.95, 0.76, 0.3 ) );
+		if( v == 40 || v == 45 )
+		{
+			//A star, pointing outward (it is symmetric across its axis).
+			float star = sdStar5( vec2( q.y, q.x - 0.36 ), 0.035, 0.45 );
+			c = mix( c, gold, cover( star, mpx ) );
+		}
+		//The value, one character under another from just inside the band,
+		//each upright when its segment is at the top.
+		float ink = stackedDistance( valueSpan( v ), vec2( -q.y, q.x - ( v >= 40 ? 0.775 : 0.775 ) ), v >= 40 ? 0.05 : 0.07, 1.12 );
+		//Dark print on the light cards ($1, $20), white on the rest.
+		vec3 print = v >= 40 ? gold : ( v == 1 || v == 20 ) ? toLinear( vec3( 0.08, 0.05, 0.03 ) ) : vec3( 0.97 );
+		c = mix( c, print, cover( -ink, mpx ) );
+		c = mix( c, gold, max( cover( div, mpx ), max( cover( bandO, mpx ), cover( bandI, mpx ) ) ) );
+		if( j == Highlight && TestFlat == 0 )
+			c *= 1.0 + 0.7 * Lights * ( 0.6 + 0.4 * sin( Time * 7.0 ) );
+		if( TestFlat == 0 )
+		{
+			//A gentle dome of light across the face.
+			c *= 0.75 + 0.35 * max( dot( normalize( vec3( m * 0.35, 1.0 ) ), L2 ), 0.0 );
+		}
+		col = layer( col, c, cover( face, mpx ) );
+	}
+	if( TestFlat == 2 )
+		return col;
+
+	//-- the pegs: brass studs between the segments, at PEG_R --------------------------
+	{
+		float seg = 2.0 * PI / float( SEGMENTS );
+		float u   = ( atan( m.y, m.x ) - WheelAngle ) / seg;
+		float k   = floor( u + 0.5 );
+		float a   = WheelAngle + k * seg;
+		vec2 c    = PEG_R * vec2( cos( a ), sin( a ) );
+		vec2 d    = ( m - c ) / ( PEG_SIZE * 1.6 );
+		float peg = length( m - c ) - PEG_SIZE * 1.6;
+		vec3 n    = vec3( d, sqrt( max( 0.0, 1.0 - dot( d, d ) ) ) );
+		vec3 brass = toLinear( vec3( 0.9, 0.75, 0.4 ) );
+		vec3 pc   = TestFlat == 1 ? brass : brass * ( 0.3 + 0.8 * max( dot( n, L2 ), 0.0 ) ) + vec3( 0.8 ) * pow( max( dot( n, normalize( L2 + vec3( 0.0, 0.0, 1.0 ) ) ), 0.0 ), 30.0 );
+		col = layer( col, vec3( 0.0 ), cover( peg - 0.002, mpx ) * 0.35 );
+		col = layer( col, pc, cover( peg, mpx ) );
+	}
+
+	//-- the hub ------------------------------------------------------------------------------
+	{
+		float hub = r - 0.24;
+		vec2 d    = m / 0.24;
+		vec3 n    = vec3( d * 0.6, sqrt( max( 0.0, 1.0 - dot( d * 0.6, d * 0.6 ) ) ) );
+		vec3 hc   = TestFlat == 1 ? Accent : Accent * ( 0.3 + 0.8 * max( dot( n, L2 ), 0.0 ) ) + vec3( 0.5 ) * pow( max( dot( reflect( -L2, n ), vec3( 0.0, 0.0, 1.0 ) ), 0.0 ), 24.0 );
+		col       = layer( col, hc, cover( hub, mpx ) );
+		float st  = sdStar5( m, 0.17, 0.42 );
+		col       = layer( col, toLinear( vec3( 1.0, 0.85, 0.35 ) ) * ( TestFlat == 1 ? 1.0 : 0.8 + 0.3 * max( dot( n, L2 ), 0.0 ) ), cover( st, mpx ) );
+		float axle = r - 0.035;
+		col        = layer( col, TestFlat == 1 ? vec3( 0.7 ) : chrome( normalize( vec3( m / 0.035 * 0.7, 0.7 ) ), vec3( 0.9 ) ), cover( axle, mpx ) );
+	}
+
+	//-- the clapper: a leather flap hanging from its bracket at the top ------------------------
+	{
+		//Drawn as the pointer it is: 26 mm at the pivot tapering to 8 at the tip.
+		//(The physics' contact is its 8 mm edge; the taper is all above the pegs.)
+		vec2 pivot = vec2( 0.0, PIVOT_Y );
+		vec2 tip   = pivot + CLAP_LEN * vec2( sin( ClapperAngle ), -cos( ClapperAngle ) );
+		float along = clamp( dot( m - tip, pivot - tip ) / ( CLAP_LEN * CLAP_LEN ), 0.0, 1.0 );
+		float flap = sdSegment( m, pivot, tip, CLAP_HALF + 0.009 * along );
+		col = layer( col, vec3( 0.0 ), cover( flap - 0.006, mpx ) * 0.45 );
+		vec3 leather = toLinear( vec3( 0.62, 0.38, 0.18 ) ) * ( TestFlat == 1 ? 1.0 : 0.75 + 0.5 * along );
+		col = layer( col, leather, cover( flap, mpx ) );
+		float bracket = sdBox( m - vec2( 0.0, PIVOT_Y + 0.05 ), vec2( 0.032, 0.04 ), 0.01 );
+		col = layer( col, TestFlat == 1 ? vec3( 0.6 ) : chrome( vec3( 0.0, 0.5, 0.85 ), vec3( 0.85 ) ), cover( bracket, mpx ) );
+		float bolt = length( m - pivot ) - 0.012;
+		col = layer( col, TestFlat == 1 ? vec3( 0.8 ) : chrome( normalize( vec3( ( m - pivot ) / 0.012 * 0.7, 0.7 ) ), vec3( 1.0 ) ), cover( bolt, mpx ) );
+	}
+	return col;
+}
+
+void main()
+{
+	vec2 p   = canvasPoint( gl_FragCoord.xy );
+	vec4 col = drawWheel( p, canvasPixel() );
+	if( TestFlat == 2 )
+	{
+		fragColour = col;
+		return;
+	}
+	fragColour = finish( over( col, backdrop( p ) ) );
+}
+)";
+
+//===========================================================================
+// Craps: the end of the table by the back wall, the layout, the dice.
+// Drawn in the 3D games' axes (z up). The physics' axes (y up, the back wall
+// at z = -0.20) map as (x, y, z) -> (x, -z, y): Jackpot.cpp converts.
+//===========================================================================
+const char* const kCraps = R"(
+//= mirrored in Craps.h.
+const float BACK_Y   = 0.20;   //the back wall (physics z = -0.20)
+const float NEAR_Y   = -0.34;
+const float SIDE_X   = 0.30;
+const float WALL_H   = 0.09;
+const float PYR_PITCH = 0.020;
+const float PYR_H    = 0.006;
+
+//Spans, = mirrored in Jackpot.cpp (DrawCraps).
+const int SP_SIX = 0, SP_NINE = 1, SP_COME = 2, SP_FIELD = 3, SP_PASS = 4, SP_DONT = 5, SP_ON = 6, SP_OFF = 7, SP_FIELDNUM = 8;
+
+uniform mat3  DieRot[ 4 ];   //body to world: the two dice, then last roll's two being swept
+uniform vec3  DiePos[ 4 ];
+uniform int   DieOn[ 4 ];
+uniform float DieHalf;       //half the side
+uniform int   FaceValue[ 6 ];//the value on the +x -x +y -y +z -z faces, body frame
+uniform int   Point;         //0: the puck is OFF
+uniform int   Pyramids;
+uniform int   Celebrate;
+
+//-- the layout, as distances on the felt (metres; + inside the ink) --------------
+float lineBox( vec2 p, vec2 lo, vec2 hi, float w )
+{
+	vec2 c = 0.5 * ( lo + hi ), h = 0.5 * ( hi - lo );
+	return w - abs( sdBox( p - c, h, 0.0 ) );
+}
+
+//The point boxes' labels: 4 5 SIX 8 NINE 10.
+float pointLabel( int i, vec2 q, float h )
+{
+	if( i == 2 )
+		return textDistance( SP_SIX, q, h );
+	if( i == 4 )
+		return textDistance( SP_NINE, q, h );
+	int v = i == 0 ? 4 : i == 1 ? 5 : i == 3 ? 8 : 10;
+	return numberDistance( v, q, h );
+}
+
+int pointOfBox( int i )
+{
+	return i == 0 ? 4 : i == 1 ? 5 : i == 2 ? 6 : i == 3 ? 8 : i == 4 ? 9 : 10;
+}
+
+//The felt's colour at p (table coordinates), the layout printed on it.
+vec3 feltLayout( vec2 p, float pxm )
+{
+	vec3 cloth = Felt * ( 0.86 + fbm2( p * 900.0 ) * 0.07 + fbm2( p * 30.0 ) * 0.07 );
+	vec3 white = toLinear( vec3( 0.95, 0.94, 0.86 ) );
+	vec3 yellow = toLinear( vec3( 0.98, 0.82, 0.25 ) );
+	vec3 red   = toLinear( vec3( 0.86, 0.12, 0.1 ) );
+	vec3 c     = cloth;
+	float w    = 0.0016;
+	//The point boxes.
+	for( int i = 0; i < 6; ++i )
+	{
+		vec2 lo = vec2( -0.27 + 0.09 * float( i ), 0.065 );
+		vec2 hi = lo + vec2( 0.09, 0.1 );
+		c = mix( c, white, cover( -lineBox( p, lo, hi, w ), pxm ) );
+		float ink = pointLabel( i, p - vec2( 0.5 * ( lo.x + hi.x ), 0.095 ), 0.032 );
+		c = mix( c, white, cover( -ink, pxm ) );
+	}
+	//COME, FIELD, DON'T PASS BAR, PASS LINE.
+	c = mix( c, white, cover( -lineBox( p, vec2( -0.27, -0.005 ), vec2( 0.27, 0.065 ), w ), pxm ) );
+	c = mix( c, red, cover( -textDistance( SP_COME, p - vec2( 0.0, 0.03 ), 0.04 ), pxm ) );
+	c = mix( c, white, cover( -lineBox( p, vec2( -0.27, -0.1 ), vec2( 0.27, -0.005 ), w ), pxm ) );
+	c = mix( c, yellow, cover( -textDistance( SP_FIELD, p - vec2( 0.0, -0.035 ), 0.032 ), pxm ) );
+	c = mix( c, white, cover( -textDistance( SP_FIELDNUM, p - vec2( 0.0, -0.077 ), 0.016 ), pxm ) );
+	c = mix( c, white, cover( -lineBox( p, vec2( -0.27, -0.155 ), vec2( 0.27, -0.1 ), w ), pxm ) );
+	c = mix( c, white, cover( -textDistance( SP_DONT, p - vec2( 0.0, -0.128 ), 0.022 ), pxm ) );
+	c = mix( c, white, cover( -lineBox( p, vec2( -0.27, -0.25 ), vec2( 0.27, -0.155 ), w ), pxm ) );
+	c = mix( c, white, cover( -textDistance( SP_PASS, p - vec2( 0.0, -0.203 ), 0.04 ), pxm ) );
+	return c;
+}
+
+//-- the dice: rounded cubes ------------------------------------------------------
+float dieDistance( vec3 q )
+{
+	float r = DieHalf * 0.22;
+	vec3 d  = abs( q ) - vec3( DieHalf - r );
+	return length( max( d, 0.0 ) ) + min( max( d.x, max( d.y, d.z ) ), 0.0 ) - r;
+}
+
+//The nearest die: (t, which), t < 0 none. March inside each one's bounding sphere.
+vec2 hitDice( vec3 ro, vec3 rd )
+{
+	vec2 best = vec2( -1.0 );
+	float bound = DieHalf * 1.75;
+	for( int i = 0; i < 4; ++i )
+	{
+		if( DieOn[ i ] == 0 )
+			continue;
+		vec3 oc = ro - DiePos[ i ];
+		float b = dot( oc, rd );
+		float h = b * b - ( dot( oc, oc ) - bound * bound );
+		if( h < 0.0 )
+			continue;
+		h        = sqrt( h );
+		float t  = max( -b - h, 0.0 );
+		float t1 = -b + h;
+		mat3 inv = transpose( DieRot[ i ] );
+		vec3 lo  = inv * ( ro + rd * t - DiePos[ i ] );
+		vec3 ld  = inv * rd;
+		for( int k = 0; k < 48 && t < t1; ++k )
+		{
+			float d = dieDistance( lo );
+			if( d < 1e-6 )
+			{
+				if( best.x < 0.0 || t < best.x )
+					best = vec2( t, float( i ) );
+				break;
+			}
+			t  += d;
+			lo += ld * d;
+		}
+	}
+	return best;
+}
+
+//The pips of a face showing v, at face coordinates q (metres): + inside.
+float pipDistance( vec2 q, int v )
+{
+	float o = DieHalf * 0.56, r = DieHalf * 0.2;
+	float best = 1e3;
+	if( v == 1 || v == 3 || v == 5 )
+		best = min( best, length( q ) );
+	if( v >= 2 )
+		best = min( best, min( length( q - vec2( -o, o ) ), length( q - vec2( o, -o ) ) ) );
+	if( v >= 4 )
+		best = min( best, min( length( q - vec2( o, o ) ), length( q - vec2( -o, -o ) ) ) );
+	if( v == 6 )
+		best = min( best, min( length( q - vec2( -o, 0.0 ) ), length( q - vec2( o, 0.0 ) ) ) );
+	return r - best;
+}
+
+//A die's colour at body point q with body normal n: translucent red and white pips.
+vec3 dieAlbedo( vec3 q, vec3 n, float pxm )
+{
+	vec3 a = abs( n );
+	int f;
+	vec2 uv;
+	if( a.x >= a.y && a.x >= a.z )
+	{
+		f  = n.x > 0.0 ? 0 : 1;
+		uv = vec2( q.y, q.z );
+	}
+	else if( a.y >= a.z )
+	{
+		f  = n.y > 0.0 ? 2 : 3;
+		uv = vec2( q.z, q.x );
+	}
+	else
+	{
+		f  = n.z > 0.0 ? 4 : 5;
+		uv = vec2( q.x, q.y );
+	}
+	float pip = pipDistance( uv, FaceValue[ f ] );
+	vec3 red  = toLinear( vec3( 0.78, 0.04, 0.06 ) );
+	return mix( red, vec3( 0.95 ), cover( -pip, pxm ) );
+}
+)";
+
+const char* const kCrapsMain = R"(
+const int C_NONE = 0, C_FELT = 1, C_WALL = 2, C_RAIL = 3, C_DIE = 4, C_PUCK = 5, C_FLOOR = 6;
+
+vec4 shadeCraps( vec3 ro, vec3 rd )
+{
+	float t  = 1e9;
+	int kind = C_NONE;
+	vec3 n   = vec3( 0.0, 0.0, 1.0 );
+	int die  = -1;
+
+	//The felt.
+	if( rd.z < 0.0 )
+	{
+		float tf = -ro.z / rd.z;
+		vec3 p   = ro + rd * tf;
+		if( abs( p.x ) <= SIDE_X && p.y <= BACK_Y && p.y >= NEAR_Y )
+		{
+			t    = tf;
+			kind = C_FELT;
+		}
+	}
+	//The back wall, facing the shooter.
+	if( rd.y > 0.0 )
+	{
+		float tw = ( BACK_Y - ro.y ) / rd.y;
+		vec3 p   = ro + rd * tw;
+		if( tw < t && abs( p.x ) <= SIDE_X && p.z >= 0.0 && p.z <= WALL_H )
+		{
+			t    = tw;
+			kind = C_WALL;
+			n    = vec3( 0.0, -1.0, 0.0 );
+		}
+	}
+	//The rails: padded boxes along the sides and the back.
+	for( int i = 0; i < 3; ++i )
+	{
+		vec3 c = i == 0 ? vec3( -SIDE_X - 0.025, -0.07, 0.5 * WALL_H ) : i == 1 ? vec3( SIDE_X + 0.025, -0.07, 0.5 * WALL_H ) : vec3( 0.0, BACK_Y + 0.025, 0.5 * WALL_H );
+		vec3 h = i == 2 ? vec3( SIDE_X + 0.05, 0.025, 0.5 * WALL_H ) : vec3( 0.025, 0.29, 0.5 * WALL_H );
+		//The padded top: a capsule along the box's top edge.
+		vec3 a = c + vec3( i == 2 ? -h.x : 0.0, i == 2 ? 0.0 : -h.y, h.z );
+		vec3 e = c + vec3( i == 2 ? h.x : 0.0, i == 2 ? 0.0 : h.y, h.z );
+		float pad = hitCapsule( ro, rd, a, e, 0.03 );
+		if( pad > 0.0 && pad < t )
+		{
+			t    = pad;
+			kind = C_RAIL;
+			n    = capsuleNormal( ro + rd * pad, a, e, 0.03 );
+		}
+		vec4 b = hitBox( ro - c, rd, h );
+		if( b.x > 0.0 && b.x < t )
+		{
+			t    = b.x;
+			kind = C_RAIL;
+			n    = b.yzw;
+		}
+	}
+	//The dice.
+	vec2 d = hitDice( ro, rd );
+	if( d.x > 0.0 && d.x < t )
+	{
+		t    = d.x;
+		kind = C_DIE;
+		die  = int( d.y );
+	}
+	//The puck: ON on the point's box, OFF in the corner of the come.
+	vec3 puckAt = Point == 0 ? vec3( -0.235, 0.03, 0.0 ) : vec3( -0.225 + 0.09 * float( Point == 4 ? 0 : Point == 5 ? 1 : Point == 6 ? 2 : Point == 8 ? 3 : Point == 9 ? 4 : 5 ), 0.14, 0.0 );
+	{
+		vec4 pk = hitCylinder( ro, rd, puckAt, puckAt + vec3( 0.0, 0.0, 0.008 ), 0.022 );
+		if( pk.x > 0.0 && pk.x < t )
+		{
+			t    = pk.x;
+			kind = C_PUCK;
+			n    = pk.yzw;
+		}
+	}
+	if( kind == C_NONE && BackdropKind == BACK_FELT && rd.z < 0.0 )
+	{
+		t    = ( -0.05 - ro.z ) / rd.z;
+		kind = C_FLOOR;
+	}
+	if( kind == C_NONE )
+		return vec4( 0.0 );
+
+	vec3 p      = ro + rd * t;
+	float pxm   = t / ( CamFocal * Resolution.y * 0.5 );
+	vec3 albedo = vec3( 0.5 );
+	float shine = 0.2;
+	if( kind == C_FELT )
+		albedo = feltLayout( p.xy, pxm );
+	else if( kind == C_WALL )
+	{
+		albedo = toLinear( vec3( 0.12, 0.11, 0.1 ) );
+		if( Pyramids == 1 )
+		{
+			//Square pyramids, PYR_PITCH across: the face under p leans its normal.
+			vec2 a  = vec2( p.x, p.z ) / PYR_PITCH;
+			vec2 f  = a - floor( a + 0.5 );
+			float s = 2.0 * PYR_H / PYR_PITCH;
+			n = abs( f.x ) > abs( f.y ) ? normalize( vec3( s * sign( f.x ), -1.0, 0.0 ) ) : normalize( vec3( 0.0, -1.0, s * sign( f.y ) ) );
+			shine = 0.25;
+		}
+	}
+	else if( kind == C_RAIL )
+	{
+		//Padded leather above, varnished wood below.
+		bool padded = p.z > WALL_H - 0.012;
+		albedo = padded ? toLinear( vec3( 0.07, 0.045, 0.035 ) ) * ( 0.9 + 0.2 * fbm2( p.xy * 300.0 ) )
+		                : woodColour( vec2( p.x * 3.0 + p.y * 3.0, p.z * 40.0 ), toLinear( vec3( 0.36, 0.17, 0.07 ) ) );
+		shine  = padded ? 0.45 : 0.7;
+	}
+	else if( kind == C_DIE )
+	{
+		mat3 inv = transpose( DieRot[ die ] );
+		vec3 q   = inv * ( p - DiePos[ die ] );
+		float e  = DieHalf * 1e-3;
+		vec3 g   = vec3( dieDistance( q + vec3( e, 0, 0 ) ) - dieDistance( q - vec3( e, 0, 0 ) ),
+		                 dieDistance( q + vec3( 0, e, 0 ) ) - dieDistance( q - vec3( 0, e, 0 ) ),
+		                 dieDistance( q + vec3( 0, 0, e ) ) - dieDistance( q - vec3( 0, 0, e ) ) );
+		vec3 nb  = normalize( g );
+		n        = DieRot[ die ] * nb;
+		albedo   = dieAlbedo( q, nb, pxm );
+		shine    = 0.85;
+	}
+	else if( kind == C_PUCK )
+	{
+		bool on   = Point != 0;
+		albedo    = on ? vec3( 0.92 ) : vec3( 0.03 );
+		vec2 q    = ( p - puckAt ).xy;
+		float ink = textDistance( on ? SP_ON : SP_OFF, q, 0.013 );
+		albedo    = mix( albedo, on ? vec3( 0.02 ) : vec3( 0.92 ), cover( -ink, pxm ) * step( 0.5, n.z ) );
+		shine     = 0.5;
+	}
+	else
+	{
+		albedo = toLinear( vec3( 0.05, 0.04, 0.035 ) );
+	}
+	if( TestFlat == 1 )
+		return vec4( albedo, 1.0 );
+
+	//Shadows: the dice (soft, from their bounding spheres) and the walls.
+	vec3 L       = keyLight();
+	float shadow = 1.0;
+	float ao     = 1.0;
+	for( int i = 0; i < 4; ++i )
+		if( DieOn[ i ] == 1 && !( kind == C_DIE && die == i ) )
+		{
+			shadow *= sphereShadow( p + n * 1e-4, L, DiePos[ i ], DieHalf * 1.1, 20.0 );
+			ao     *= 1.0 - 0.7 * sphereOcclusion( p, n, DiePos[ i ], DieHalf * 1.1 );
+		}
+	if( kind == C_FELT )
+		ao *= 0.55 + 0.45 * smoothstep( 0.0, 0.05, BACK_Y - p.y ) * smoothstep( 0.0, 0.05, SIDE_X - abs( p.x ) );
+	vec3 c = shadeSurface( albedo, n, rd, shine, shadow, ao );
+	if( kind == C_DIE )
+	{
+		//Light through the red resin.
+		c += albedo * toLinear( vec3( 1.0, 0.2, 0.15 ) ) * 0.35 * ( 1.0 - max( dot( n, -rd ), 0.0 ) );
+	}
+	return vec4( c, 1.0 );
+}
+
+void main()
+{
+	vec2 p   = canvasPoint( gl_FragCoord.xy );
+	int n    = Samples <= 1 ? 1 : 4;
+	vec4 sum = vec4( 0.0 );
+	for( int i = 0; i < n; ++i )
+		sum += shadeCraps( CamPos, cameraRay( gl_FragCoord.xy + sampleOffset( i ) ) );
+	fragColour = finish( over( sum / float( n ), backdrop( p ) ) );
+}
+)";
+
+//===========================================================================
+// The lottery drum: a glass sphere of balls, the tube up and the rack along.
+//===========================================================================
+const char* const kLottery = R"(
+//= mirrored in Lottery.h.
+const float DRUM    = 0.24;
+const float BALL    = 0.021;
+const float MOUTH   = 0.034;
+const float RACK_Z  = 0.34;      //DRUM + 0.10
+const float RACK_X0 = 0.075;
+const float RACK_PITCH = 0.047;
+const float TUBE_R  = 0.037;
+const float RAIL_R  = 0.026;
+const float RAIL_END = 0.40;
+
+uniform sampler2D BallData;      //rows: (x y z number), (quaternion w x y z), (screen x y radius px, 0)
+uniform int   BallCount;
+uniform float Air;               //0..1: the blower
+
+//The UK lotto's colours by tens: white, blue, pink, green, yellow, purple, and orange beyond.
+vec3 bandColour( int n )
+{
+	int b = clamp( n / 10, 0, 6 );
+	vec3 c[ 7 ] = vec3[ 7 ]( vec3( 0.95, 0.95, 0.93 ), vec3( 0.2, 0.45, 0.95 ), vec3( 0.98, 0.45, 0.68 ), vec3( 0.25, 0.75, 0.35 ),
+	                          vec3( 0.98, 0.84, 0.2 ), vec3( 0.6, 0.35, 0.85 ), vec3( 0.98, 0.55, 0.15 ) );
+	return toLinear( c[ b ] );
+}
+
+mat3 quatMatrix( vec4 q )
+{
+	float w = q.x, x = q.y, y = q.z, z = q.w;
+	return mat3( 1.0 - 2.0 * ( y * y + z * z ), 2.0 * ( x * y + w * z ), 2.0 * ( x * z - w * y ),
+	             2.0 * ( x * y - w * z ), 1.0 - 2.0 * ( x * x + z * z ), 2.0 * ( y * z + w * x ),
+	             2.0 * ( x * z + w * y ), 2.0 * ( y * z - w * x ), 1.0 - 2.0 * ( x * x + y * y ) );
+}
+
+//The side of a cylinder along z from z0 to z1 (no caps): the nearest t > 0.
+float hitTubeZ( vec3 ro, vec3 rd, vec2 c, float r, float z0, float z1, out vec3 n )
+{
+	vec2 o  = ro.xy - c;
+	float a = dot( rd.xy, rd.xy );
+	float b = dot( o, rd.xy );
+	float h = b * b - a * ( dot( o, o ) - r * r );
+	if( h < 0.0 || a < 1e-12 )
+		return -1.0;
+	h = sqrt( h );
+	for( int k = 0; k < 2; ++k )
+	{
+		float t = ( -b + ( k == 0 ? -h : h ) ) / a;
+		float z = ro.z + rd.z * t;
+		if( t > 1e-4 && z >= z0 && z <= z1 )
+		{
+			n = vec3( ( o + rd.xy * t ) / r, 0.0 );
+			return t;
+		}
+	}
+	return -1.0;
+}
+
+//The same along x, at height zc, from x0 to x1.
+float hitTubeX( vec3 ro, vec3 rd, float zc, float r, float x0, float x1, out vec3 n )
+{
+	vec2 o  = vec2( ro.y, ro.z - zc );
+	vec2 d  = rd.yz;
+	float a = dot( d, d );
+	float b = dot( o, d );
+	float h = b * b - a * ( dot( o, o ) - r * r );
+	if( h < 0.0 || a < 1e-12 )
+		return -1.0;
+	h = sqrt( h );
+	for( int k = 0; k < 2; ++k )
+	{
+		float t = ( -b + ( k == 0 ? -h : h ) ) / a;
+		float x = ro.x + rd.x * t;
+		if( t > 1e-4 && x >= x0 && x <= x1 )
+		{
+			vec2 q = ( o + d * t ) / r;
+			n      = vec3( 0.0, q );
+			return t;
+		}
+	}
+	return -1.0;
+}
+
+//Glass: what a pane adds over what is behind it (premultiplied), from Fresnel.
+vec4 glassOver( vec4 behind, vec3 n, vec3 rd, float strength )
+{
+	if( dot( n, rd ) > 0.0 )
+		n = -n;
+	float fre  = 0.04 + 0.96 * pow( 1.0 - abs( dot( n, rd ) ), 5.0 );
+	vec3 refl  = studio( reflect( rd, n ).xzy ) * 0.9;
+	vec3 L     = keyLight();
+	float spec = pow( max( dot( n, normalize( L - rd ) ), 0.0 ), 300.0 ) * 1.4;
+	float a    = clamp( ( fre + 0.03 ) * strength, 0.0, 1.0 );
+	vec3 tint  = vec3( 0.93, 0.97, 1.0 );
+	return vec4( behind.rgb * tint * ( 1.0 - a ) + ( refl * fre + vec3( spec ) ) * strength, max( behind.a, a ) );
+}
+)";
+
+const char* const kLotteryMain = R"(
+const int MAX_NEAR = 10;
+
+vec4 shadeLottery( vec3 ro, vec3 rd, int nearCount, int nearList[ MAX_NEAR ] )
+{
+	float t  = 1e9;
+	vec3 n   = vec3( 0.0, 0.0, 1.0 );
+	int kind = 0;   //0 none, 1 ball, 2 stand, 3 band, 4 floor
+	int ball = -1;
+
+	for( int k = 0; k < nearCount; ++k )
+	{
+		int i   = nearList[ k ];
+		vec4 b  = texelFetch( BallData, ivec2( i, 0 ), 0 );
+		float h = hitSphere( ro, rd, b.xyz, BALL );
+		if( h > 0.0 && h < t )
+		{
+			t    = h;
+			kind = 1;
+			ball = i;
+			n    = ( ro + rd * h - b.xyz ) / BALL;
+		}
+	}
+	//The stand: the blower's housing and the plinth.
+	vec4 s1 = hitCylinder( ro, rd, vec3( 0.0, 0.0, -0.33 ), vec3( 0.0, 0.0, -0.225 ), 0.11 );
+	if( s1.x > 0.0 && s1.x < t )
+	{
+		t    = s1.x;
+		kind = 2;
+		n    = s1.yzw;
+	}
+	vec4 s2 = hitCylinder( ro, rd, vec3( 0.0, 0.0, -0.38 ), vec3( 0.0, 0.0, -0.33 ), 0.24 );
+	if( s2.x > 0.0 && s2.x < t )
+	{
+		t    = s2.x;
+		kind = 2;
+		n    = s2.yzw;
+	}
+	//The chrome band round the drum's equator, and the collar at the mouth.
+	vec3 bn;
+	float bt = hitTubeZ( ro, rd, vec2( 0.0 ), DRUM + 0.006, -0.009, 0.009, bn );
+	if( bt > 0.0 && bt < t )
+	{
+		t    = bt;
+		kind = 3;
+		n    = bn;
+	}
+	vec4 col = hitCylinder( ro, rd, vec3( 0.0, 0.0, DRUM - 0.012 ), vec3( 0.0, 0.0, DRUM + 0.012 ), TUBE_R + 0.008 );
+	if( col.x > 0.0 && col.x < t && abs( col.w ) < 0.5 )
+	{
+		t    = col.x;
+		kind = 3;
+		n    = col.yzw;
+	}
+	if( kind == 0 && BackdropKind == BACK_FELT && rd.z < 0.0 )
+	{
+		t    = ( -0.38 - ro.z ) / rd.z;
+		kind = 4;
+	}
+
+	vec4 c = vec4( 0.0 );
+	if( kind != 0 )
+	{
+		vec3 p      = ro + rd * t;
+		vec3 albedo = vec3( 0.5 );
+		float shine = 0.5;
+		if( kind == 1 )
+		{
+			vec4 b    = texelFetch( BallData, ivec2( ball, 0 ), 0 );
+			vec4 q    = texelFetch( BallData, ivec2( ball, 1 ), 0 );
+			int num   = int( b.w + 0.5 );
+			mat3 R    = quatMatrix( q );
+			vec3 nb   = transpose( R ) * n;
+			albedo    = bandColour( num );
+			//A white patch on each pole of the body's z, the number on it.
+			float pole = abs( nb.z );
+			float pxm  = t / ( CamFocal * Resolution.y * 0.5 );
+			float edge = ( pole - 0.80 ) * BALL;
+			albedo     = mix( albedo, vec3( 0.93 ), cover( -edge, pxm ) );
+			vec2 face  = nb.xy * BALL * sign( nb.z );
+			face.x    *= sign( nb.z );
+			float ink  = numberDistance( num, face, BALL * 0.46 );
+			albedo     = mix( albedo, vec3( 0.0 ), cover( -ink - 0.15 * pxm, pxm ) * step( 0.8, pole ) );
+			shine      = 0.8;
+		}
+		else if( kind == 2 || kind == 3 )
+		{
+			albedo = kind == 3 ? toLinear( vec3( 0.85, 0.83, 0.8 ) ) : toLinear( vec3( 0.16, 0.16, 0.18 ) );
+			shine  = kind == 3 ? 1.0 : 0.85;
+		}
+		else
+		{
+			albedo = Felt * ( 0.85 + fbm2( p.xy * 600.0 ) * 0.1 );
+			shine  = 0.0;
+		}
+		if( TestFlat == 1 )
+			c = vec4( albedo, 1.0 );
+		else
+		{
+			float ao = 1.0;
+			if( kind == 4 )
+				ao = 0.4 + 0.6 * smoothstep( 0.2, 0.4, length( p.xy ) );
+			c = vec4( shadeSurface( albedo, n, rd, shine, 1.0, ao ), 1.0 );
+		}
+	}
+	if( TestFlat == 1 )
+		return c;
+
+	//The glass, back to front: the far side of the drum, then its near side,
+	//and the tube and the rail, wherever they are in front of what was hit.
+	vec3 oc = ro;
+	float b = dot( oc, rd );
+	float h = b * b - ( dot( oc, oc ) - DRUM * DRUM );
+	if( h > 0.0 )
+	{
+		h        = sqrt( h );
+		float t0 = -b - h, t1 = -b + h;
+		if( t1 > 0.0 && t1 < t )
+			c = glassOver( c, normalize( ro + rd * t1 ), rd, 0.5 );
+		if( t0 > 0.0 && t0 < t )
+			c = glassOver( c, normalize( ro + rd * t0 ), rd, 1.0 );
+	}
+	vec3 tn;
+	float tt = hitTubeZ( ro, rd, vec2( 0.0 ), TUBE_R, DRUM - 0.004, RACK_Z + RAIL_R, tn );
+	if( tt > 0.0 && tt < t )
+		c = glassOver( c, tn, rd, 0.8 );
+	tt = hitTubeX( ro, rd, RACK_Z, RAIL_R, -0.03, RAIL_END, tn );
+	if( tt > 0.0 && tt < t )
+		c = glassOver( c, tn, rd, 0.8 );
+	return c;
+}
+
+void main()
+{
+	vec2 p = canvasPoint( gl_FragCoord.xy );
+	//The balls that can be under this pixel, from their projected discs.
+	int nearList[ MAX_NEAR ];
+	int nearCount = 0;
+	for( int i = 0; i < BallCount && nearCount < MAX_NEAR; ++i )
+	{
+		vec4 sc = texelFetch( BallData, ivec2( i, 2 ), 0 );
+		if( sc.z > 0.0 && length( gl_FragCoord.xy - sc.xy ) < sc.z )
+			nearList[ nearCount++ ] = i;
+	}
+	int n    = Samples <= 1 ? 1 : 4;
+	vec4 sum = vec4( 0.0 );
+	for( int i = 0; i < n; ++i )
+		sum += shadeLottery( CamPos, cameraRay( gl_FragCoord.xy + sampleOffset( i ) ), nearCount, nearList );
+	fragColour = finish( over( sum / float( n ), backdrop( p ) ) );
+}
+)";
+
+//===========================================================================
+// The shower: one quad per piece, the exact disc found in the fragment.
+// The world is in frame heights (y up, the frame from -0.5 to 0.5, z toward
+// the viewer), seen straight on, orthographically.
+//===========================================================================
+const char* const kShowerVertex = R"(
+layout( location = 0 ) in vec2 corner;
+layout( location = 1 ) in vec4 iPos;   //x y z radius
+layout( location = 2 ) in vec4 iQuat;  //w x y z
+layout( location = 3 ) in vec4 iMisc;  //half thickness, kind, colour, fade
+uniform vec2 Resolution;
+uniform mat3 View;          //world to view: a little from above (Jackpot.cpp)
+uniform float ViewLift;     //view y added after it
+out vec2 uv;
+out vec2 world;
+flat out vec4 pos;
+flat out vec4 quat;
+flat out vec4 misc;
+void main()
+{
+	float bound = sqrt( iPos.w * iPos.w + iMisc.x * iMisc.x ) * 1.02;
+	vec3 centre = View * iPos.xyz + vec3( 0.0, ViewLift, 0.0 );
+	world       = centre.xy + corner * bound;
+	pos         = iPos;
+	quat        = iQuat;
+	misc        = iMisc;
+	float aspect = Resolution.x / Resolution.y;
+	gl_Position = vec4( world.x / ( 0.5 * aspect ), world.y / 0.5, 0.0, 1.0 );
+	uv          = gl_Position.xy * 0.5 + 0.5;
+}
+)";
+
+const char* const kShowerFragment = R"(
+in vec2 world;
+flat in vec4 pos;
+flat in vec4 quat;
+flat in vec4 misc;
+uniform mat3 View;
+uniform float ViewLift;
+
+mat3 pieceMatrix( vec4 q )
+{
+	float w = q.x, x = q.y, y = q.z, z = q.w;
+	return mat3( 1.0 - 2.0 * ( y * y + z * z ), 2.0 * ( x * y + w * z ), 2.0 * ( x * z - w * y ),
+	             2.0 * ( x * y - w * z ), 1.0 - 2.0 * ( x * x + z * z ), 2.0 * ( y * z + w * x ),
+	             2.0 * ( x * z + w * y ), 2.0 * ( y * z - w * x ), 1.0 - 2.0 * ( x * x + y * y ) );
+}
+
+//The chips' denominations: white, red, green, black, purple, orange.
+vec3 chipColour( int c )
+{
+	vec3 k[ 6 ] = vec3[ 6 ]( vec3( 0.92, 0.91, 0.88 ), vec3( 0.75, 0.06, 0.07 ), vec3( 0.1, 0.55, 0.22 ),
+	                          vec3( 0.06, 0.06, 0.07 ), vec3( 0.45, 0.15, 0.62 ), vec3( 0.96, 0.5, 0.1 ) );
+	return toLinear( k[ clamp( c, 0, 5 ) ] );
+}
+
+void main()
+{
+	float R    = pos.w, H = misc.x;
+	mat3 M     = pieceMatrix( quat );
+	mat3 inv   = transpose( M );
+	//The ray, straight into the view, taken back to the world, then the body.
+	mat3 back  = transpose( View );
+	vec3 rdw   = back * vec3( 0.0, 0.0, -1.0 );
+	vec3 ro    = inv * ( back * ( vec3( world, 10.0 ) - vec3( 0.0, ViewLift, 0.0 ) ) - pos.xyz );
+	vec3 rd    = inv * rdw;
+	//The disc: a cylinder along the body's z, radius R, from -H to H.
+	float t    = -1.0;
+	vec3 nb    = vec3( 0.0 );
+	{
+		float a = dot( rd.xy, rd.xy ), b = dot( ro.xy, rd.xy ), c = dot( ro.xy, ro.xy ) - R * R;
+		float h = b * b - a * c;
+		if( h >= 0.0 && a > 1e-12 )
+		{
+			float ts = ( -b - sqrt( h ) ) / a;
+			float z  = ro.z + rd.z * ts;
+			if( abs( z ) <= H )
+			{
+				t  = ts;
+				nb = vec3( ( ro.xy + rd.xy * ts ) / R, 0.0 );
+			}
+		}
+		for( int s = -1; s <= 1; s += 2 )
+		{
+			if( abs( rd.z ) < 1e-9 )
+				break;
+			float tc = ( float( s ) * H - ro.z ) / rd.z;
+			vec2 q   = ro.xy + rd.xy * tc;
+			if( dot( q, q ) <= R * R && ( t < 0.0 || tc < t ) )
+			{
+				t  = tc;
+				nb = vec3( 0.0, 0.0, float( s ) );
+			}
+		}
+	}
+	if( t < 0.0 )
+		discard;
+	vec3 lp     = ro + rd * t;
+	vec3 n      = M * nb;
+	bool coin   = misc.y > 0.5;
+	float pxw   = 1.0 / Resolution.y;
+	vec3 albedo;
+	float shine;
+	float rr    = length( lp.xy ) / R;
+	float ang   = atan( lp.y, lp.x );
+	if( coin )
+	{
+		//Gold, a raised milled rim and a star struck in the middle.
+		albedo = toLinear( vec3( 1.0, 0.78, 0.3 ) );
+		shine  = 1.0;
+		if( abs( nb.z ) > 0.5 )
+		{
+			float rim = smoothstep( 0.78, 0.84, rr );
+			n         = normalize( M * vec3( lp.xy / R * 0.5 * rim * ( 1.0 - rim ) * 4.0, nb.z ) );
+			vec2 q    = lp.xy / R;
+			vec2 k1   = vec2( 0.809016994375, -0.587785252292 );
+			vec2 k2   = vec2( -k1.x, k1.y );
+			q.x = abs( q.x );
+			q -= 2.0 * max( dot( k1, q ), 0.0 ) * k1;
+			q -= 2.0 * max( dot( k2, q ), 0.0 ) * k2;
+			q.x = abs( q.x );
+			q.y -= 0.45;
+			vec2 ba    = 0.42 * vec2( -k1.y, k1.x ) - vec2( 0.0, 1.0 );
+			float hh   = clamp( dot( q, ba ) / dot( ba, ba ), 0.0, 0.45 );
+			float star = length( q - ba * hh ) * sign( q.y * ba.x - q.x * ba.y );
+			albedo    *= 1.0 - 0.25 * smoothstep( 0.02, -0.02, star );
+		}
+		else
+			albedo *= 0.75 + 0.25 * step( 0.5, fract( ang * 40.0 / PI ) );
+	}
+	else
+	{
+		//A casino chip: the colour, six white inserts round the edge, an inlay.
+		vec3 base   = chipColour( int( misc.z + 0.5 ) );
+		vec3 insert = int( misc.z + 0.5 ) == 0 ? toLinear( vec3( 0.12, 0.3, 0.75 ) ) : vec3( 0.93 );
+		float seg   = fract( ang * 6.0 / ( 2.0 * PI ) + 0.25 );
+		bool spot   = seg < 0.32;
+		albedo      = base;
+		shine       = 0.35;
+		if( abs( nb.z ) > 0.5 )
+		{
+			if( rr > 0.74 && spot )
+				albedo = insert;
+			float inlay = abs( rr - 0.62 ) - 0.012;
+			albedo      = mix( albedo, insert, cover( inlay * R, pxw ) * 0.85 );
+			if( rr < 0.55 )
+				albedo = mix( base, vec3( 0.95 ), 0.65 );
+		}
+		else if( spot )
+			albedo = insert;
+	}
+	vec3 c   = TestFlat == 1 ? albedo : shadeSurface( albedo, normalize( n ), rdw, shine, 1.0, 1.0 );
+	float a  = clamp( misc.w, 0.0, 1.0 );
+	fragColour = vec4( c * a, a );
+	//Depth from the hit: nearer (larger z) is smaller.
+	vec3 hit     = View * ( M * lp + pos.xyz );
+	gl_FragDepth = clamp( 0.5 - hit.z / 4.0, 0.0, 1.0 );
+}
+)";
+
+const char* const kComposite = R"(
+in vec2 uv;
+out vec4 fragColour;
+uniform sampler2D Pieces;
+uniform float Strength;   //Mix, on the effect
+void main()
+{
+	vec4 s        = texture( Pieces, uv );
+	vec3 straight = s.a > 0.0 ? s.rgb / s.a : vec3( 0.0 );
+	vec3 shown    = pow( max( straight, 0.0 ), vec3( 1.0 / 2.2 ) );
+	fragColour    = vec4( shown, 1.0 ) * s.a * Strength;
+}
+)";
 
 } // namespace jackpot::shaders

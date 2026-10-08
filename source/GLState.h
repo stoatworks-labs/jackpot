@@ -67,12 +67,11 @@ struct SavedGLState
 	{
 		glViewport( viewport[ 0 ], viewport[ 1 ], viewport[ 2 ], viewport[ 3 ] );
 		glClearColor( clearColour[ 0 ], clearColour[ 1 ], clearColour[ 2 ], clearColour[ 3 ] );
-		if( depthTest )
-			glEnable( GL_DEPTH_TEST );
-		if( cullFace )
-			glEnable( GL_CULL_FACE );
-		if( scissorTest )
-			glEnable( GL_SCISSOR_TEST );
+		//Both ways: the shower pass enables the depth test, and a restore that
+		//only re-enabled would leave it on for the host.
+		( depthTest ? glEnable : glDisable )( GL_DEPTH_TEST );
+		( cullFace ? glEnable : glDisable )( GL_CULL_FACE );
+		( scissorTest ? glEnable : glDisable )( GL_SCISSOR_TEST );
 		glBlendFuncSeparate( blendSrcRGB, blendDstRGB, blendSrcAlpha, blendDstAlpha );
 		if( blend )
 			glEnable( GL_BLEND );

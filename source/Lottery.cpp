@@ -13,6 +13,12 @@ constexpr double kDt        = 1.0 / 1500.0;
 constexpr double kGravity   = 9.81;
 constexpr double kDrag      = 0.13;   ///< 1/m: (1/2) rho Cd A / m, a 42 mm ball of 3 g
 constexpr double kJetWidth  = 0.085;  ///< m: the jet's radius
+constexpr double kJetDecay  = 1.0;    ///< m: the jet's strength falls by e over this height
+constexpr double kJetGain   = 2.5;    ///< the jet's lift at its core, per unit of Air
+constexpr double kSwirl     = 0.08;   ///< 1/m: the tangential push, per unit of lift, at the bottom (more spins the cloud up into a centrifuge)
+constexpr double kTurbulence = 0.25;  ///< of the lift
+constexpr double kSuction   = 1.5;    ///< the open tube's pull at its mouth, per unit of lift
+constexpr double kSuctionReach = 0.10;///< m
 constexpr double kBallBounce = 0.85;
 constexpr double kGlassBounce = 0.70;
 constexpr double kBallGrip  = 0.10;
@@ -37,6 +43,15 @@ Quat Integrate( Quat q, V3 w, double dt )
 V3 RackSlot( int k )
 {
 	return { kRackX0 + kRackPitch * k, 0.0, kRackZ };
+}
+
+/// A ball on the rack: its number (on the body's z) toward the viewer (-y),
+/// turned by `roll` about the rail's normal (y), which keeps it facing us.
+Quat OnRack( double roll )
+{
+	const Quat facing = { std::cos( 0.25 * kPi ), std::sin( 0.25 * kPi ), 0.0, 0.0 };//z -> -y about x
+	const Quat turn   = { std::cos( 0.5 * roll ), 0.0, std::sin( 0.5 * roll ), 0.0 };
+	return turn * facing;
 }
 } // namespace
 
@@ -175,11 +190,25 @@ Simulation Simulate( const Request& r, double mix, double gap, const std::atomic
 			v[ k ].z -= kGravity * kDt;
 			if( strength > 0.0 )
 			{
+				//A fountain: the jet carries balls up the middle to the top, where
+				//they spread and fall back down the glass. (A swirl several times
+				//the lift, as first written, flung every ball into a ring round
+				//the equator and none ever reached the mouth.)
 				const double rho2  = p.x * p.x + p.y * p.y;
-				const double core  = std::exp( -rho2 / ( kJetWidth * kJetWidth ) ) * std::exp( -( p.z + kDrum ) / 0.30 );
-				const double swirl = 0.45 * std::exp( -( p.z + kDrum ) / 0.5 );
+				const double core  = std::exp( -rho2 / ( kJetWidth * kJetWidth ) ) * std::exp( -( p.z + kDrum ) / kJetDecay );
+				const double swirl = kSwirl * std::exp( -( p.z + kDrum ) / 0.5 );
 				const V3 turb      = { std::sin( 9.0 * p.y + 1.3 * t + phase1 ), std::sin( 8.0 * p.z + 1.7 * t + phase2 ), 0.4 * std::sin( 7.0 * p.x + 1.1 * t + phase3 ) };
-				v[ k ] += ( V3 { -p.y * swirl * 6.0, p.x * swirl * 6.0, 1.6 * core } + turb * 0.35 ) * ( lift * strength * kDt );
+				v[ k ] += ( V3 { -p.y * swirl, p.x * swirl, kJetGain * core } + turb * kTurbulence ) * ( lift * strength * kDt );
+				//The open tube: the air leaves through it, and draws in what is
+				//near its mouth.
+				if( t >= nextOpen && !done )
+				{
+					const V3 mouth   = { 0.0, 0.0, kDrum - kBall };
+					const V3 toward  = mouth - p;
+					const double d   = Length( toward );
+					if( d < kSuctionReach && d > 1e-6 )
+						v[ k ] += toward * ( kSuction * lift * strength * ( 1.0 - d / kSuctionReach ) / d * kDt );
+				}
 			}
 			const double speed = Length( v[ k ] );
 			v[ k ] -= v[ k ] * ( kDrag * speed * kDt );
@@ -262,7 +291,11 @@ Simulation Simulate( const Request& r, double mix, double gap, const std::atomic
 				}
 			}
 			const double rho = std::sqrt( p.x * p.x + p.y * p.y );
-			if( !done && t >= nextOpen && rho < kMouth && p.z > kDrum - kBall - 0.012 && v[ k ].z > 0.0 )
+			//The mouth is a hole in the glass: a ball under it while it is open
+			//goes up the tube, whichever way it was moving. (Requiring it to be
+			//rising caught almost nothing: a ball pressed against the glass
+			//under the mouth is not rising.)
+			if( !done && t >= nextOpen && rho < kMouth && p.z > kDrum - kBall - 0.015 )
 			{
 				gone[ k ] = 1;
 				sim.captured.push_back( i );
@@ -376,7 +409,7 @@ std::vector< BallState > Plan::Balls( double seconds ) const
 	if( idle )
 	{
 		for( size_t k = 0; k < numbers.size(); ++k )
-			out.push_back( { RackSlot( static_cast< int >( k ) ), Quat {}, numbers[ k ], true } );
+			out.push_back( { RackSlot( static_cast< int >( k ) ), OnRack( 0.0 ), numbers[ k ], true } );
 		for( const BallState& b : request.previousDrum )
 			out.push_back( b );
 		return out;
@@ -396,7 +429,7 @@ std::vector< BallState > Plan::Balls( double seconds ) const
 		{
 			V3 p = RackSlot( static_cast< int >( k ) );
 			p.x += 0.9 * tau + 1.2 * tau * tau;
-			out.push_back( { p, Quat {}, request.previousRack[ k ], true } );
+			out.push_back( { p, OnRack( -( 0.9 * tau + 1.2 * tau * tau ) / kBall ), request.previousRack[ k ], true } );
 		}
 		return out;
 	}
@@ -440,9 +473,17 @@ std::vector< BallState > Plan::Balls( double seconds ) const
 				}
 				else
 					b.x = top + ( slot - top ) * Smooth( ( since - kRise ) / rollFor );
-				//Rolling along the rack turns it about the rail's normal.
-				const double roll = std::max( 0.0, since - kRise ) / rollFor * Length( slot - top ) / kBall;
-				b.q     = { std::cos( 0.5 * roll ), 0.0, std::sin( 0.5 * roll ), 0.0 };
+				//Rolling along the rack turns it about the rail's normal, and it
+				//comes to rest with its number upright.
+				const double along = Smooth( std::max( 0.0, since - kRise ) / rollFor );
+				if( since < kRise )
+				{
+					//Up the tube turning as it was caught: its last key holds it.
+					V3 caughtX;
+					at( k0, i, caughtX, b.q );
+				}
+				else
+					b.q = OnRack( -( 1.0 - along ) * Length( slot - top ) / kBall );
 				b.shown = true;
 				out.push_back( b );
 				continue;

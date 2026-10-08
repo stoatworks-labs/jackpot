@@ -56,7 +56,7 @@ constexpr double kTrackSlope = 0.24932800284318071;///< tan( 14 deg )
 constexpr double kStatorSlope = 0.36397023426620234;///< tan( 20 deg )
 constexpr double kApronSlope = 0.25;
 constexpr double kPocketDepth = 0.014;
-constexpr double kFretHeight  = 0.018;///< above the pocket floor
+constexpr double kFretHeight  = 0.014;///< above the pocket floor: flush with the rims (AGENTS.md)
 constexpr double kStep        = 0.004;///< m: the width of a pocket's steep steps
 constexpr int kDiamonds       = 8;
 constexpr double kGravity     = 9.81;
@@ -108,7 +108,7 @@ struct Simulation
 	std::vector< V3 > keys;     ///< ball centre at kKeyRate, from release
 	double natural   = 0.0;     ///< s from release to rest
 	bool settled     = false;
-	int pocket       = 0;       ///< physical pocket (rotor frame, counted from the fret phase's zero)
+	int pocket       = 0;       ///< the pocket the ball rests in, in the rotor's frame (its pocket 0 at RotorPockets)
 	double departSpeed = 0.0;   ///< m/s when the lip last pushed
 	double departRadius = 0.0;  ///< m, the ball's centre then
 	double departTime  = 0.0;

@@ -754,6 +754,65 @@ int main( int argc, char** argv )
 		}
 	}
 
+	if( mode == "shaders" )
+	{
+		//Every program exactly as the plugin compiles it, for tools/glslc.sh.
+		const std::string dir = outPath;
+		for( const shaders::Program& program : shaders::Programs() )
+		{
+			std::ofstream( dir + "/" + program.name + ".vert" ) << program.vertex;
+			std::ofstream( dir + "/" + program.name + ".frag" ) << program.fragment;
+		}
+		std::printf( "wrote %zu programs to %s\n", shaders::Programs().size(), dir.c_str() );
+		//And each through this machine's driver, with its log on a failure.
+		CGLContextObj context = createContext();
+		if( context == nullptr )
+			return 1;
+		int failed = 0;
+		for( const shaders::Program& program : shaders::Programs() )
+		{
+			auto compile = [ & ]( GLenum type, const std::string& text, const char* what ) {
+				const GLuint shader = glCreateShader( type );
+				const char* source  = text.c_str();
+				glShaderSource( shader, 1, &source, nullptr );
+				glCompileShader( shader );
+				GLint ok = 0;
+				glGetShaderiv( shader, GL_COMPILE_STATUS, &ok );
+				if( !ok )
+				{
+					char log[ 4096 ] = {};
+					glGetShaderInfoLog( shader, sizeof( log ), nullptr, log );
+					std::printf( "  FAIL  %s %s:\n%s\n", program.name, what, log );
+					++failed;
+				}
+				return shader;
+			};
+			const GLuint vs = compile( GL_VERTEX_SHADER, program.vertex, "vertex" );
+			const GLuint fs = compile( GL_FRAGMENT_SHADER, program.fragment, "fragment" );
+			const GLuint linked = glCreateProgram();
+			glAttachShader( linked, vs );
+			glAttachShader( linked, fs );
+			glLinkProgram( linked );
+			GLint ok = 0;
+			glGetProgramiv( linked, GL_LINK_STATUS, &ok );
+			if( !ok )
+			{
+				char log[ 4096 ] = {};
+				glGetProgramInfoLog( linked, sizeof( log ), nullptr, log );
+				std::printf( "  FAIL  %s link:\n%s\n", program.name, log );
+				++failed;
+			}
+			else
+				std::printf( "  ok    %s\n", program.name );
+			glDeleteProgram( linked );
+			glDeleteShader( vs );
+			glDeleteShader( fs );
+		}
+		CGLSetCurrentContext( nullptr );
+		CGLDestroyContext( context );
+		return failed == 0 ? 0 : 1;
+	}
+
 	if( mode == "list" )
 	{
 		JackpotPlugin plugin( effect );

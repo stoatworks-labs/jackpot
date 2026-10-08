@@ -16,8 +16,11 @@ constexpr int kMaxTrials      = 10;
 constexpr double kCockedDeg   = 1.0;
 constexpr double kOnTable     = 3e-4;
 constexpr double kBlendSeconds = 0.15;
-constexpr double kSpeedLow    = 1.0;
-constexpr double kSpeedHigh   = 3.2;
+constexpr double kSpeedLow    = 1.9;
+constexpr double kSpeedHigh   = 2.5;
+constexpr double kSpeedMax    = 3.2; ///< after throws that fell short of the wall
+constexpr double kSlowest     = 0.6; ///< the slowest motion a throw is played at
+constexpr int kSoftTrials     = 6;   ///< tries that must also rest on the layout
 constexpr int kStepsPerKey    = 4;///< 960 Hz physics, 240 Hz keys
 
 /// The face a body at rest lies on, and how far off flat it is (degrees).
@@ -343,13 +346,13 @@ Plan MakePlan( const Request& r, const std::atomic< bool >* cancel )
 	plan.total   = plan.values[ 0 ] + plan.values[ 1 ];
 	plan.sweep   = r.havePrevious ? 0.35 : 0.0;
 
-	const double want = std::max( 0.3, r.duration - plan.sweep );
-	double speed      = std::clamp( 1.0 + 0.6 * want, kSpeedLow, kSpeedHigh );
+	Stream speeds( Hash( r.seed, r.play, 0x5beedu ) );
+	double boost = 1.0;
 	Attempt best;
-	double bestError = 1e30;
 	for( int trial = 0; trial < kMaxTrials; ++trial )
 	{
 		++plan.trials;
+		const double speed = std::min( kSpeedMax, speeds.Range( kSpeedLow, kSpeedHigh ) * boost );
 		const uint32_t sub = Hash( r.seed, r.play, static_cast< uint32_t >( trial ), 0x7417u );
 		Attempt attempt    = Throw( r, speed, sub, cancel );
 		if( attempt.cancelled )
@@ -359,23 +362,30 @@ Plan MakePlan( const Request& r, const std::atomic< bool >* cancel )
 		if( attempt.valid && !attempt.hitWall )
 		{
 			++plan.missedWall;
-			speed = std::min( kSpeedHigh, speed * 1.25 );
+			boost *= 1.2;
 			continue;
 		}
 		if( !attempt.valid || attempt.natural < 0.05 )
 			continue;
-		const double error = std::fabs( std::log( attempt.natural / want ) );
-		if( error < bestError )
+		if( !best.valid )
 		{
-			bestError  = error;
 			best       = attempt;
 			plan.speed = speed;
 		}
-		//Dice settle in about a second however hard they are thrown, so a long
-		//Spin Time is slow motion; accept anything inside the warp's comfort.
-		const double warp = attempt.natural / want;
-		if( warp > 0.35 && warp < 1.6 )
+		//Softly, for the first tries: both dice at rest on the printed layout,
+		//where the camera is looking, not back by the shooter's rail.
+		bool onLayout = true;
+		for( const Track& t : attempt.tracks )
+		{
+			const V3 x = t.keys.back().x;
+			onLayout   = onLayout && x.z > kBackWall + 0.03 && x.z < 0.22 && std::fabs( x.x ) < 0.26;
+		}
+		if( onLayout || trial >= kSoftTrials )
+		{
+			best       = attempt;
+			plan.speed = speed;
 			break;
+		}
 	}
 	if( !best.valid )
 	{
@@ -389,7 +399,10 @@ Plan MakePlan( const Request& r, const std::atomic< bool >* cancel )
 	plan.natural  = best.natural;
 	plan.hitWall  = best.hitWall;
 	plan.stats    = best.stats;
-	plan.playback = MakePlayback( plan.sweep + best.natural, r.duration, r.noWarp );
+	//The hold that leaves at most a gentle slow motion to make up the rest.
+	const double thrown = plan.sweep + best.natural;
+	plan.hold           = r.noWarp ? 0.0 : std::max( 0.0, kSlowest * r.duration - thrown );
+	plan.playback       = MakePlayback( thrown + plan.hold, r.duration, r.noWarp );
 	const geo::Solid& cube = geo::GetSolid( geo::Shape::Cube );
 	const geo::Labelling& labels = geo::GetLabelling( geo::DieType::D6, 0 );
 	for( int i = 0; i < 2; ++i )
@@ -474,7 +487,7 @@ bool Plan::DieAt( int i, double seconds, V3& x, M3& r ) const
 		r = ToMatrix( t.keys.back().q ) * t.S;
 		return true;
 	}
-	const double simT = playback.SimTime( seconds ) - sweep;
+	const double simT = playback.SimTime( seconds ) - sweep - hold;
 	if( simT < 0.0 )
 		return false;
 	const double f    = simT * kKeyRate;

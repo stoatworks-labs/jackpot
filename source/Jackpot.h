@@ -177,7 +177,6 @@ private:
 	void UploadAtlas();
 	void UploadSymbols();
 	void ReapAbandoned( bool wait );
-	bool CompileGame( Game game, const std::string& fragment );
 
 	slots::Request SlotsRequest() const;
 	roulette::Request RouletteRequest() const;
@@ -188,6 +187,16 @@ private:
 
 	void SetCommonUniforms( ffglex::FFGLShader& shader, int width, int height, const FFGLTextureStruct* input );
 	void SetTextUniforms( ffglex::FFGLShader& shader, const std::vector< std::string >& spans );
+	/// The 3D games' camera, and where it puts a point on the frame.
+	struct Camera
+	{
+		V3 pos, right, up, forward;
+		double focal = 1.0;
+		int width = 1, height = 1;
+		/// Pixels (x, y from the bottom left) and depth; depth <= 0 behind.
+		V3 Project( V3 p ) const;
+	};
+	Camera SetCamera( ffglex::FFGLShader& shader, int width, int height, double radius, double rise, V3 target, double lowerBy = 0.0 );
 	void DrawSlots( ffglex::FFGLShader& shader, double t );
 	void DrawRoulette( ffglex::FFGLShader& shader, double t, int width, int height );
 	void DrawWheel( ffglex::FFGLShader& shader, double t );
@@ -201,7 +210,7 @@ private:
 	ffglex::FFGLShader programs[ static_cast< int >( Game::Count ) ];
 	ffglex::FFGLShader showerProgram, compositeProgram;
 	ffglex::FFGLScreenQuad quad;
-	GLuint atlasTexture = 0, symbolTexture = 0, blankTexture = 0;
+	GLuint atlasTexture = 0, symbolTexture = 0, blankTexture = 0, ballTexture = 0;
 	GLuint showerFbo = 0, showerColour = 0, showerDepth = 0, showerVao = 0, showerVbo = 0, quadVbo = 0;
 	int showerWidth = 0, showerHeight = 0;
 

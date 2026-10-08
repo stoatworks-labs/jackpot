@@ -29,6 +29,15 @@
 
     ## The game
 
+    ## Meeting Spin Time
+
+    Dice settle in 0.6 to 1 s however hard they are thrown (polyhedral found the
+    same), so the throw's speed is NOT chosen from the duration -- a throw hard
+    enough to fill four seconds rebounds the length of the table. Every throw
+    is a stickman's ordinary one, 1.9 to 2.5 m/s, and the duration is met by the
+    shooter's hold after the sweep plus at most a gentle slow motion (0.6x):
+    `hold` is the pause that makes the rest of the warp up.
+
     Come-out: 7 or 11 wins, 2, 3 or 12 is craps, anything else is the point
     (the puck goes ON). With a point: the point again wins, a 7 is a seven-out,
     anything else is no decision. Result reads against that state -- see README.
@@ -95,6 +104,7 @@ struct Plan
 	Playback playback;
 	Outcome outcome;
 	double sweep    = 0.35;///< sim seconds the stick sweeps the old dice away
+	double hold     = 0.0; ///< sim seconds the shooter holds the dice after the sweep
 	double natural  = 0.0; ///< dice seconds from release to rest
 	int trials      = 0;
 	int missedWall  = 0;   ///< throws rejected for falling short of the back wall

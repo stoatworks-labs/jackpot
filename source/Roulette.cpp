@@ -25,10 +25,26 @@ constexpr double kHandSpin     = 1.2;          ///< s: the croupier's spin befor
 constexpr double kFretHalf     = 0.001;        ///< m: half a fret's thickness
 constexpr double kDiamondHalf  = 0.010, kDiamondRadius = 0.006;
 
-const std::vector< int > kEuropean = { 0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10,
-	                                   5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26 };
-const std::vector< int > kAmerican = { 0, 28, 9, 26, 30, 11, 7, 20, 32, 17, 5, 22, 34, 15, 3, 24, 36, 13, 1,
-	                                   37, 27, 10, 25, 29, 12, 8, 19, 31, 18, 6, 21, 33, 16, 4, 23, 35, 14, 2 };
+/// The wheels as they are always written: clockwise from the zero, seen from
+/// above.
+const int kEuropeanClockwise[] = { 0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10,
+	                               5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26 };
+const int kAmericanClockwise[] = { 0, 28, 9, 26, 30, 11, 7, 20, 32, 17, 5, 22, 34, 15, 3, 24, 36, 13, 1,
+	                               37, 27, 10, 25, 29, 12, 8, 19, 31, 18, 6, 21, 33, 16, 4, 23, 35, 14, 2 };
+
+/// Pocket order here runs ANTICLOCKWISE (angle increases from +x toward +y,
+/// z up), so the lists are read backwards from the zero. Taken as written, the
+/// wheel would be drawn in mirror image.
+template< size_t N >
+std::vector< int > Anticlockwise( const int ( &clockwise )[ N ] )
+{
+	std::vector< int > out = { clockwise[ 0 ] };
+	for( size_t i = N - 1; i >= 1; --i )
+		out.push_back( clockwise[ i ] );
+	return out;
+}
+const std::vector< int > kEuropean = Anticlockwise( kEuropeanClockwise );
+const std::vector< int > kAmerican = Anticlockwise( kAmericanClockwise );
 
 /// The profile, (r, z), inward to outward. Segments 0..4 turn with the rotor.
 struct Vertex
@@ -83,39 +99,57 @@ struct Contact
 /// The ball against the profile: the closest point of the polyline in the
 /// ball's meridian plane, which for a surface of revolution IS the closest
 /// point of the surface.
+///
+/// Which SIDE the ball is on comes from the profile as a height field (below
+/// it, or beyond the lip, is solid), not from the side of the nearest
+/// segment's line: past the end of a steep segment -- a pocket's step -- that
+/// line runs through open air, and reading the side from it once threw the
+/// ball four centimetres inward on its first step.
 Contact Profile( V3 p )
 {
 	const double r = std::sqrt( p.x * p.x + p.y * p.y );
 	Contact best;
 	double nearest = 1e9;
+	double cr = 0.0, cz = 0.0;
 	for( int i = 0; i + 1 < kVertices; ++i )
 	{
 		const Vertex a = kProfile[ i ], b = kProfile[ i + 1 ];
 		const double er = b.r - a.r, ez = b.z - a.z;
 		const double t  = std::clamp( ( ( r - a.r ) * er + ( p.z - a.z ) * ez ) / ( er * er + ez * ez ), 0.0, 1.0 );
-		const double cr = a.r + t * er, cz = a.z + t * ez;
-		const double dr = r - cr, dz = p.z - cz;
-		const double d  = std::sqrt( dr * dr + dz * dz );
-		//Which side: the surface's "up" is to the left walking outward.
-		const double side = er * dz - ez * dr;
-		const double signedD = side >= 0.0 ? d : -d;
-		if( signedD < nearest )
+		const double qr = a.r + t * er, qz = a.z + t * ez;
+		const double d  = std::sqrt( ( r - qr ) * ( r - qr ) + ( p.z - qz ) * ( p.z - qz ) );
+		if( d < nearest )
 		{
-			nearest = signedD;
-			const double len = std::max( d, 1e-12 );
-			double nr = dr / len, nz = dz / len;
-			if( side < 0.0 )
-			{
-				nr = -nr;
-				nz = -nz;
-			}
-			const double inv = r > 1e-9 ? 1.0 / r : 0.0;
-			best.normal      = { nr * p.x * inv, nr * p.y * inv, nz };
-			best.depth       = kBallRadius - signedD;
-			best.segment     = i;
+			nearest      = d;
+			cr           = qr;
+			cz           = qz;
+			best.segment = i;
 		}
 	}
-	best.hit = best.depth > 0.0;
+	const bool solid = r >= kLip || p.z < Height( r );
+	double nr = r - cr, nz = p.z - cz;
+	if( nearest > 1e-12 )
+	{
+		nr /= nearest;
+		nz /= nearest;
+		if( solid )
+		{
+			nr = -nr;
+			nz = -nz;
+		}
+	}
+	else
+	{
+		//On the surface: the segment's own normal, up and inward.
+		const Vertex a = kProfile[ best.segment ], b = kProfile[ best.segment + 1 ];
+		const double len = std::hypot( b.r - a.r, b.z - a.z );
+		nr = -( b.z - a.z ) / len;
+		nz = ( b.r - a.r ) / len;
+	}
+	const double inv = r > 1e-9 ? 1.0 / r : 0.0;
+	best.normal      = { nr * p.x * inv, nr * p.y * inv, nz };
+	best.depth       = kBallRadius - ( solid ? -nearest : nearest );
+	best.hit         = best.depth > 0.0;
 	return best;
 }
 
@@ -265,7 +299,11 @@ Simulation Simulate( const Launch& L, const std::atomic< bool >* cancel )
 			const double ang  = ( psi - fret ) * pocket;
 			const double dt   = r * std::sin( ang );             //across the fret
 			const double along = r * std::cos( ang );            //along it, radially
-			const double cr   = std::clamp( along, kPocketIn - kStep, kPocketOut );
+			//The frets run between the steps' feet: their outer ends stop a
+			//step short of the apron, as on a real rotor. (Run out to the apron's
+			//edge, a fret's end stood 4 mm proud of it and the ball, carried
+			//round with the rotor, could lean on one for ever.)
+			const double cr   = std::clamp( along, kPocketIn - kStep, kPocketOut - kStep );
 			const double cz   = std::clamp( p.z, -kPocketDepth, fretTop );
 			const double across = std::fabs( dt ) - kFretHalf;
 			const double d    = std::sqrt( std::max( across, 0.0 ) * std::max( across, 0.0 ) + ( along - cr ) * ( along - cr ) + ( p.z - cz ) * ( p.z - cz ) );
@@ -325,9 +363,15 @@ Simulation Simulate( const Launch& L, const std::atomic< bool >* cancel )
 		{
 			sim.settled = true;
 			sim.natural = t - kRestFor;
-			const double psi = Wrap( phi ) / pocket - fretFrac;
+			//The pocket in the ROTOR's frame: counted from where the rotor's own
+			//pocket 0 is now, whole turns and all. (The frets' fractional phase
+			//alone, which is all the physics uses, loses the whole pockets the
+			//rotor turned during the spin, and the ring was turned that many
+			//pockets wrong: a ball in 35's pocket reported 22.)
+			const double rotorPockets = RotorPockets( L, t );
+			const double psi = Wrap( phi ) / pocket - rotorPockets;
 			sim.pocket       = static_cast< int >( ( ( static_cast< long >( std::floor( psi + 0.5 ) ) % N ) + N ) % N );
-			const double rotorAngle = RotorPockets( L, t ) * pocket;
+			const double rotorAngle = rotorPockets * pocket;
 			sim.restAngleInRotor = phi - rotorAngle;
 			sim.restRadius   = r;
 			sim.restHeight   = p.z;
