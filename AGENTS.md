@@ -276,6 +276,17 @@ shower controls, the felt colour, Display, Light Angle, Tilt, and the effect's C
 symbols. Every one is a control that belongs to another game or acts at another
 moment; none is live only by a side effect.
 
+## In Arena (2026-10-09)
+
+Loaded into Resolume Arena 7.27.1 on macOS and driven by hand: both plugins register
+(JP01 category 3, JP02 category 1), SW Jackpot renders in a clip, a slots Jackpot and a
+roulette spin land as asked, the shower falls, and the diag log is clean. One thing to
+know when driving Arena from a session: **an option row's button can light without the
+value reaching the plugin** (fleet memory: an accessibility press does that). The first
+play here came up Random under a lit "Jackpot"; Arena then redrew the row as Random,
+the value the plugin held. A real click sent it. Read the diag log's play line, not the
+panel, for what was played.
+
 ## What is verified, and what is assumed
 
 Verified (numbers in README "Status"): every game shows the result asked for, read
@@ -299,6 +310,6 @@ Assumed or chosen, not measured:
 
 ## Not done
 
-Never loaded into Resolume; no Arena gate, OpenFX port, browser demo, presets or
-user guide. The workflows exist and have never run (there is no GitHub repo); turn
+In Resolume only on this Mac, two plays (README "Status"); no OpenFX port, browser
+demo or presets. The workflows exist and have never run (there is no GitHub repo); turn
 them on only if the repo is public.

@@ -91,8 +91,8 @@ shader's mirrored constants, or the harness's readbacks.
   is public (the fleet's rule for Actions minutes).
 
 ## Not done yet
-- Never loaded into Resolume, on either platform; no Arena gate, no OpenFX port,
-  no browser demo, no presets, no user guide.
+- In Resolume only on this Mac (two plays, 2026-10-09); no OpenFX port, no browser
+  demo, no presets.
 - `StoatworksAbout.h` and `ATTRIBUTIONS.md` are provisional hand copies until
   Jackpot is registered in stoatworks-backend (whose sync scripts then own them,
   with the issue forms and FUNDING.yml).

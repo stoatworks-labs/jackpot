@@ -1,9 +1,10 @@
 # jackpot
 
 > **AI-assisted project.** This codebase was created with [Claude](https://claude.com/claude-code)
-> (Anthropic), directed and reviewed by a human author. It has **never been loaded
-> into Resolume**. Everything below is measured by an offline harness that drives
-> the real plugin classes in a headless GL context. `jptest --roulette` spins for
+> (Anthropic), directed and reviewed by a human author. It has been loaded into
+> **Resolume Arena 7.27.1 on macOS** and played there (see [Status](#status)); everything
+> else below is measured by an offline harness that drives the real plugin classes in
+> a headless GL context. `jptest --roulette` spins for
 > every number of both wheels, and at rest the ball lies in the pocket painted
 > with the number asked for, read from the ball and the ring **as drawn**; turning
 > the rotor by any whole number of pockets leaves the ball's path **bit-identical**,
@@ -130,10 +131,17 @@ composition restores both.
 
 **v0.1.0, unreleased, 2026-10-08.** No user guide yet.
 
-It has **never been loaded into Resolume**, on either platform. `oxbow probe`
-reads the bundles as a host does (`SW Jackpot` / `JP01` / source, `SW Jackpot
-Over` / `JP02` / effect) and `oxbow selftest` renders through each. Built and
-measured on macOS (Apple Silicon); no OpenFX port, no browser demo, no Arena gate.
+**In Resolume Arena 7.27.1 on macOS** (this Mac, Apple M4 Max, 2026-10-09): Arena's log
+registers `'SW Jackpot' uid: JP01 category: 3` and `'SW Jackpot Over' uid: JP02
+category: 1`, each loading in under half a second. SW Jackpot dropped into a clip
+showed the slot machine at 1920×1080 with every control group; Result *Jackpot* and
+Play landed three sevens at Spin Time with the banner, the meters counting 200 in and
+the shower raining; switched to Roulette, the ball ran the track and came to rest on
+7 RED, the bet's number, under the result board. The plugin's own log recorded both
+plays as asked and no warning or error. The Over effect, the other three games, Land
+On against Arena's transport and a saved composition were not tried there. `oxbow
+probe` reads the bundles as a host does and `oxbow selftest` renders through each. No
+OpenFX port, no browser demo.
 
 What is measured, on this machine:
 
@@ -168,9 +176,10 @@ wheel **55** (worst 82).
 
 What is **not** verified, and is the honest limit of this release:
 
-- **Never in Resolume.** Nothing here has met Arena's clock through a real play,
-  its transport (whether `barPhase` is a usable downbeat is unmeasured fleet-wide;
-  Land On trusts it), its parameter restore order, or any GPU but this one.
+- **Two plays in one Arena, on one Mac.** Nothing here has met Arena's transport
+  (whether `barPhase` is a usable downbeat is unmeasured fleet-wide; Land On trusts
+  it), its parameter restore order across a saved composition, or any GPU but this
+  one.
 - **The physics is mine, and checked, not fitted.** The roulette ball is a point
   carrying its radius on a profile of cones, with one friction for each surface;
   the clapper is a spring that straightens at a third of its stiffness; the
