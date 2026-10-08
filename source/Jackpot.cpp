@@ -1053,7 +1053,9 @@ JackpotPlugin::Camera JackpotPlugin::SetCamera( FFGLShader& shader, int width, i
 	shader.Set( "CamUp", static_cast< float >( up.x ), static_cast< float >( up.y ), static_cast< float >( up.z ) );
 	shader.Set( "CamForward", static_cast< float >( forward.x ), static_cast< float >( forward.y ), static_cast< float >( forward.z ) );
 	shader.Set( "CamFocal", static_cast< float >( unzoomed * ZoomFromParam( params[ PT_ZOOM ] ) ) );
-	shader.Set( "Samples", flat ? 1 : 4 );
+	//Four rays a pixel up to 1080p; above, four only on the edges the 2x2
+	//quads can see (a third of the cost at 4K, where a pixel is small).
+	shader.Set( "Samples", flat ? 1 : height > 1200 ? 2 : 4 );
 	Camera camera;
 	camera.pos     = pos;
 	camera.right   = right;
@@ -1178,6 +1180,7 @@ void JackpotPlugin::DrawCraps( FFGLShader& shader, double t, int width, int heig
 	glUniform1iv( shader.FindUniform( "FaceValue" ), 6, faceValue );
 	shader.Set( "Point", crapsPoint );
 	shader.Set( "Pyramids", params[ PT_PYRAMIDS ] > 0.5f ? 1 : 0 );
+	shader.Set( "Puck", params[ PT_PUCK ] > 0.5f ? 1 : 0 );
 	shader.Set( "Celebrate", !p.idle && t >= p.playback.duration && p.outcome.win && since >= 0.0 && since < kBannerFor ? 1 : 0 );
 	//= mirrored in Shaders.cpp (kCraps's SP_ constants).
 	SetTextUniforms( shader, { "SIX", "NINE", "COME", "FIELD", "PASS LINE", "DON'T PASS BAR", "ON", "OFF", "2 3 4 9 10 11 12" } );

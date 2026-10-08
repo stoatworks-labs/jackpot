@@ -3,7 +3,8 @@
 # Every shader through glslc, the one shader check that needs no GL driver.
 # Called by tools/verify.sh AND by CI, so the two cannot drift: a runner with
 # no accelerated GL cannot compile a shader through a driver, and this is how
-# CI covers the shaders instead (polytest --offline covers the physics).
+# CI covers the shaders instead (jptest --offline covers the physics; on a Mac,
+# `jptest --shaders` compiles the same programs through the real driver).
 #
 #     tools/glslc.sh          exit 0 when every shader compiles, or glslc is absent
 #     GLSLC_REQUIRED=1 tools/glslc.sh   ...and a missing glslc is a failure (CI)
@@ -12,11 +13,10 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 #---------------------------------------------------------------------------
-# Every shader, through a real GLSL compiler, before a host has to find out.
-#
-# A shader that will not compile presents to an operator as "the effect does
-# nothing", with the real message buried in the diagnostics log -- so without
-# this it is caught at run time, in a host, or not at all.
+# Every program, assembled exactly as shaders::Programs() in Shaders.cpp
+# assembles it -- the program list is READ from that function, not copied
+# here, so a program the plugin compiles cannot be missed and a piece list
+# cannot drift. The one list is the plugin's.
 #
 # --target-env=opengl4.5 with -fauto-map-locations: glslc targets SPIR-V, which
 # demands an explicit layout( location ) on every uniform and varying. Those are
@@ -36,62 +36,40 @@ shaders_compile() {
 
 	dir="$( mktemp -d )"
 
-	python3 - "$dir" <<'SHADERS_PY'
+	python3 - "$dir" <<'SHADERS_PY' || { rm -rf "$dir"; return 1; }
 import re, sys, pathlib
-out = pathlib.Path( sys.argv[ 1 ] )
+out  = pathlib.Path( sys.argv[ 1 ] )
+text = pathlib.Path( "source/Shaders.cpp" ).read_text()
 
-# Where this repo keeps its GLSL.
-FILES = [
-	"source/Shaders.cpp",
-]
+named = {}
+for m in re.finditer( r'const char\* const (\w+)\s*=\s*R"\((.*?)\)"', text, re.S ):
+	named[ m.group( 1 ) ] = m.group( 2 )
+for m in re.finditer( r'const char\* const (\w+)\s*=\s*((?:"(?:[^"\\\n]|\\.)*"\s*)+);', text ):
+	named.setdefault( m.group( 1 ), "".join(
+		s.encode().decode( "unicode_escape" ) for s in re.findall( r'"((?:[^"\\\n]|\\.)*)"', m.group( 2 ) ) ) )
 
-# Shaders the plugin assembles at run time: kVersion + kCommon + pieces, the
-# order Shaders.cpp's Assemble() and Dice.cpp's InitGL use. A name that has
-# moved is a KeyError.
-ASSEMBLED = {
-	"quad": [ "kVersion", "kQuadVertex" ],
-	"dice": [ "kVersion", "kCommon", "kDice", "kMaterial", "kFragment" ],
-}
+def assemble( pieces ):
+	# A name that has moved is a KeyError here, not a silent skip.
+	return "".join( named[ p.strip() ] for p in pieces.split( "," ) if p.strip() )
 
-named, unnamed = {}, []
-for f in FILES:
-	text = pathlib.Path( f ).read_text()
-	for m in re.finditer( r'(?:(\w+)\s*(?:\[\s*\])?\s*=\s*)?R"\((.*?)\)"', text, re.S ):
-		if m.group( 1 ): named[ m.group( 1 ) ] = m.group( 2 )
-		else:            unnamed.append( m.group( 2 ) )
-	# Adjacent string literals, joined: MSVC C2026 caps one literal at about
-	# 16 KB, so a shader that outgrows it is split and has to be rejoined here.
-	for m in re.finditer( r'(\w+)\s*=\s*((?:"(?:[^"\\\n]|\\.)*"\s*)+);', text ):
-		named.setdefault( m.group( 1 ), "".join(
-			s.encode().decode( "unicode_escape" )
-			for s in re.findall( r'"((?:[^"\\\n]|\\.)*)"', m.group( 2 ) ) ) )
+body = text[ text.index( "std::vector< Program > Programs()" ): ]
+body = body[ : body.index( "\n}\n" ) ]
+quad = re.search( r'const std::string quad = Assemble\(\s*\{([^}]*)\}\s*\);', body )
+programs = re.findall( r'\{\s*"(\w+)",\s*(quad|Assemble\(\s*\{[^}]*\}\s*\)),\s*Assemble\(\s*\{([^}]*)\}\s*\)\s*\}', body )
+if not quad or not programs:
+	sys.exit( "   could not read shaders::Programs() -- the extraction has gone stale" )
 
-def emit( name, body ):
-	# The vertex shader is the one that writes gl_Position; everything else is a
-	# fragment shader. glslc takes the stage from the extension.
-	ext = ".vert" if re.search( r"\bgl_Position\s*=", body ) else ".frag"
-	( out / ( name + ext ) ).write_text( body )
+used = set()
+for name, vertex, fragment in programs:
+	vpieces = quad.group( 1 ) if vertex == "quad" else re.search( r'\{([^}]*)\}', vertex ).group( 1 )
+	used |= { p.strip() for p in ( vpieces + "," + fragment ).split( "," ) if p.strip() }
+	( out / ( name + ".vert" ) ).write_text( assemble( vpieces ) )
+	( out / ( name + ".frag" ) ).write_text( assemble( fragment ) )
 
-def piece( p ):
-	# An int indexes the raw strings that are not assigned to a name, in source
-	# order. A literal starts with #version. Anything else names a constant
-	# above -- and a name that has moved is a KeyError here, not a silent skip.
-	if isinstance( p, int ):       return unnamed[ p ]
-	if p.startswith( "#version" ): return p
-	return named[ p ]
-
-for name, body in named.items():
-	if body.lstrip().startswith( "#version" ) and "void main" in body:
-		emit( name, body )
-
-# A piece that no pass uses is a pass that is not being checked.
-used = { p for parts in ASSEMBLED.values() for p in parts }
+# A piece that no program uses is GLSL that is not being checked.
 for name in named:
-	if name.startswith( "k" ) and name not in used:
-		sys.exit( f"{name} is a shader piece no ASSEMBLED entry uses" )
-
-for name, parts in ASSEMBLED.items():
-	emit( name, "".join( piece( p ) for p in parts ) )
+	if name not in used:
+		sys.exit( f"   {name} is a shader piece no program in shaders::Programs() uses" )
 SHADERS_PY
 
 	for shader in "$dir"/*.vert "$dir"/*.frag; do
@@ -106,16 +84,15 @@ SHADERS_PY
 	done
 
 	if [ "$n" -eq 0 ]; then
-		# No shaders at all is a FAILURE, not a pass. It means the extraction
-		# above has lost track of where this repo keeps its GLSL, and a check
-		# that silently looks at nothing is worse than no check.
+		# No shaders at all is a FAILURE, not a pass: the extraction above has
+		# lost track of where this repo keeps its GLSL.
 		printf '   no shaders were extracted -- the extraction has gone stale\n'
 		rm -rf "$dir"
 		return 1
 	fi
 
 	if [ "$bad" -eq 0 ]; then
-		printf '   %d shaders, all compile\n' "$n"
+		printf '   %d shaders (%d programs), all compile\n' "$n" "$(( n / 2 ))"
 	fi
 	rm -rf "$dir"
 	return "$bad"

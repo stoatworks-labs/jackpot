@@ -94,12 +94,13 @@ std::vector< int > DrawNumbers( const Request& r )
 		break;
 	case Result::NearMiss:
 	{
-		const int near = bet + 1 <= N ? bet + 1 : bet - 1;
+		//Not `near`: a macro in windef.h on MSVC.
+		const int beside = bet + 1 <= N ? bet + 1 : bet - 1;
 		take( bet );
-		take( near );
+		take( beside );
 		while( static_cast< int >( out.size() ) < K - 1 )
 			out.push_back( drawOne() );
-		out.push_back( near );
+		out.push_back( beside );
 		break;
 	}
 	case Result::Lose:

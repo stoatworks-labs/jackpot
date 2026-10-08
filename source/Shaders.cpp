@@ -528,12 +528,12 @@ void lampRow( inout vec4 col, vec2 q, vec2 a, vec2 b, int count, int base, float
 {
 	vec2 ab  = b - a;
 	float t  = clamp( dot( q - a, ab ) / dot( ab, ab ), 0.0, 1.0 );
-	int near = int( floor( t * float( count - 1 ) + 0.5 ) );
+	int nearest = int( floor( t * float( count - 1 ) + 0.5 ) );
 	vec3 warm = toLinear( vec3( 1.0, 0.85, 0.45 ) );
 	float glow = 0.0;
 	for( int k = -1; k <= 1; ++k )
 	{
-		int i = near + k;
+		int i = nearest + k;
 		if( i < 0 || i >= count )
 			continue;
 		vec2 c   = a + ab * ( float( i ) / float( count - 1 ) );
@@ -756,7 +756,12 @@ uniform vec3  CamRight;
 uniform vec3  CamUp;
 uniform vec3  CamForward;
 uniform float CamFocal;   //1 / tan( half the vertical field of view )
-uniform int   Samples;    //1 or 4 rays per pixel
+uniform int   Samples;    //rays per pixel: 1; 2 means four at the pixels on an edge, one elsewhere; 4
+
+//The surface the last shaded ray hit, by kind (and part, and pocket): a pixel
+//whose 2x2 quad saw two different ones is on an edge (fwidth), and only those
+//take four rays when Samples is 2.
+float HitId = 0.0;
 
 //The ray through a point of the frame (in pixels).
 vec3 cameraRay( vec2 fragment )
@@ -775,8 +780,6 @@ vec3 keyLight()
 //The rotated-grid offsets for four rays (or the centre, for one).
 vec2 sampleOffset( int i )
 {
-	if( Samples <= 1 )
-		return vec2( 0.0 );
 	vec2 o[ 4 ] = vec2[ 4 ]( vec2( 0.125, 0.375 ), vec2( 0.375, -0.125 ), vec2( -0.125, -0.375 ), vec2( -0.375, 0.125 ) );
 	return o[ i ];
 }
@@ -891,11 +894,13 @@ float sphereOcclusion( vec3 p, vec3 n, vec3 c, float r )
 	return clamp( dot( n, d ) * r * r / ( l * l * l ), 0.0, 1.0 );
 }
 
-//Varnished wood, its grain running round the wheel.
-vec3 woodColour( vec2 polar, vec3 base )
+//Varnished wood at a point of the surface (metres, in the frame the wood turns
+//with), its grain in rings round the origin. Cartesian, not polar: an angle
+//wraps at pi, and the grain showed a seam there.
+vec3 woodColour( vec2 q, vec3 base )
 {
-	float g    = fbm2( vec2( polar.x * 140.0, polar.y * 2.0 ) );
-	float ring = 0.5 + 0.5 * sin( polar.x * 900.0 + g * 9.0 );
+	float g    = fbm2( q * 28.0 );
+	float ring = 0.5 + 0.5 * sin( length( q ) * 900.0 + g * 9.0 );
 	return base * ( 0.72 + 0.28 * ring ) * ( 0.85 + 0.3 * g );
 }
 
@@ -1212,12 +1217,18 @@ vec4 shadeRoulette( vec3 ro, vec3 rd )
 		t    = ( TABLE_Z - ro.z ) / rd.z;
 		kind = K_TABLE;
 	}
+	HitId = float( kind ) * 1000.0 + float( seg ) * 40.0;
 	if( kind == K_NONE )
 		return vec4( 0.0 );
 
 	vec3 p     = ro + rd * t;
 	float r    = length( p.xy );
 	float phi  = atan( p.y, p.x );
+	if( kind == K_BOWL && seg >= 2 && seg <= 5 )
+	{
+		float across;
+		HitId += float( pocketAt( phi, across ) );
+	}
 	vec3 albedo = vec3( 0.5 );
 	float shine = 0.3;
 	float ao    = 1.0;
@@ -1237,10 +1248,10 @@ vec4 shadeRoulette( vec3 ro, vec3 rd )
 
 	if( kind == K_BOWL )
 	{
-		vec2 polarRotor = vec2( r, phi - RingAngle );
+		vec2 inRotor = vec2( cos( -RingAngle ) * p.x - sin( -RingAngle ) * p.y, sin( -RingAngle ) * p.x + cos( -RingAngle ) * p.y );
 		if( seg <= 1 )
 		{
-			albedo = woodColour( polarRotor, toLinear( vec3( 0.62, 0.36, 0.16 ) ) );
+			albedo = woodColour( inRotor, toLinear( vec3( 0.62, 0.36, 0.16 ) ) );
 			shine  = 0.75;
 		}
 		else if( seg <= 4 )
@@ -1274,7 +1285,7 @@ vec4 shadeRoulette( vec3 ro, vec3 rd )
 		else
 		{
 			vec3 base = seg == 6 ? toLinear( vec3( 0.28, 0.13, 0.06 ) ) : toLinear( vec3( 0.42, 0.2, 0.08 ) );
-			albedo    = woodColour( vec2( r, phi ), base );
+			albedo    = woodColour( p.xy, base );
 			shine     = seg == 7 ? 0.9 : 0.7;
 		}
 	}
@@ -1320,12 +1331,16 @@ vec4 shadeRoulette( vec3 ro, vec3 rd )
 
 void main()
 {
-	vec2 p   = canvasPoint( gl_FragCoord.xy );
-	int n    = Samples <= 1 ? 1 : 4;
-	vec4 sum = vec4( 0.0 );
-	for( int i = 0; i < n; ++i )
-		sum += shadeRoulette( CamPos, cameraRay( gl_FragCoord.xy + sampleOffset( i ) ) );
-	vec4 game = sum / float( n );
+	vec2 p    = canvasPoint( gl_FragCoord.xy );
+	vec4 game = shadeRoulette( CamPos, cameraRay( gl_FragCoord.xy + ( Samples == 4 ? sampleOffset( 0 ) : vec2( 0.0 ) ) ) );
+	bool edge = fwidth( HitId ) > 0.0;
+	if( Samples == 4 || ( Samples == 2 && edge ) )
+	{
+		vec4 sum = Samples == 4 ? game : vec4( 0.0 );
+		for( int i = Samples == 4 ? 1 : 0; i < 4; ++i )
+			sum += shadeRoulette( CamPos, cameraRay( gl_FragCoord.xy + sampleOffset( i ) ) );
+		game = sum / 4.0;
+	}
 	if( TestFlat == 2 )
 	{
 		fragColour = game;
@@ -1400,7 +1415,7 @@ vec4 drawWheel( vec2 p, float px )
 
 	//-- the stand: a post down from the hub and a foot ------------------------
 	float post = sdBox( m - vec2( 0.0, -0.75 ), vec2( 0.07, 0.75 ), 0.01 );
-	col = layer( col, toLinear( vec3( 0.22, 0.12, 0.06 ) ) * ( TestFlat == 1 ? 1.0 : 0.8 + 0.4 * smoothstep( 0.07, -0.07, m.x ) ), cover( post, mpx ) );
+	col = layer( col, toLinear( vec3( 0.22, 0.12, 0.06 ) ) * ( TestFlat == 1 ? 1.0 : 0.8 + 0.4 * sstep( 0.07, -0.07, m.x ) ), cover( post, mpx ) );
 
 	//-- the rim: a lacquered ring with a chase of lamps ------------------------------
 	float rim = abs( r - 0.955 ) - 0.065;
@@ -1557,6 +1572,7 @@ uniform int   DieOn[ 4 ];
 uniform float DieHalf;       //half the side
 uniform int   FaceValue[ 6 ];//the value on the +x -x +y -y +z -z faces, body frame
 uniform int   Point;         //0: the puck is OFF
+uniform int   Puck;          //0: no puck on the layout
 uniform int   Pyramids;
 uniform int   Celebrate;
 
@@ -1767,6 +1783,7 @@ vec4 shadeCraps( vec3 ro, vec3 rd )
 	}
 	//The puck: ON on the point's box, OFF in the corner of the come.
 	vec3 puckAt = Point == 0 ? vec3( -0.235, 0.03, 0.0 ) : vec3( -0.225 + 0.09 * float( Point == 4 ? 0 : Point == 5 ? 1 : Point == 6 ? 2 : Point == 8 ? 3 : Point == 9 ? 4 : 5 ), 0.14, 0.0 );
+	if( Puck == 1 )
 	{
 		vec4 pk = hitCylinder( ro, rd, puckAt, puckAt + vec3( 0.0, 0.0, 0.008 ), 0.022 );
 		if( pk.x > 0.0 && pk.x < t )
@@ -1781,6 +1798,7 @@ vec4 shadeCraps( vec3 ro, vec3 rd )
 		t    = ( -0.05 - ro.z ) / rd.z;
 		kind = C_FLOOR;
 	}
+	HitId = float( kind ) * 16.0 + float( die );
 	if( kind == C_NONE )
 		return vec4( 0.0 );
 
@@ -1808,7 +1826,7 @@ vec4 shadeCraps( vec3 ro, vec3 rd )
 		//Padded leather above, varnished wood below.
 		bool padded = p.z > WALL_H - 0.012;
 		albedo = padded ? toLinear( vec3( 0.07, 0.045, 0.035 ) ) * ( 0.9 + 0.2 * fbm2( p.xy * 300.0 ) )
-		                : woodColour( vec2( p.x * 3.0 + p.y * 3.0, p.z * 40.0 ), toLinear( vec3( 0.36, 0.17, 0.07 ) ) );
+		                : woodColour( vec2( p.x + p.y, p.z ) + vec2( 3.0 ), toLinear( vec3( 0.36, 0.17, 0.07 ) ) );
 		shine  = padded ? 0.45 : 0.7;
 	}
 	else if( kind == C_DIE )
@@ -1863,12 +1881,17 @@ vec4 shadeCraps( vec3 ro, vec3 rd )
 
 void main()
 {
-	vec2 p   = canvasPoint( gl_FragCoord.xy );
-	int n    = Samples <= 1 ? 1 : 4;
-	vec4 sum = vec4( 0.0 );
-	for( int i = 0; i < n; ++i )
-		sum += shadeCraps( CamPos, cameraRay( gl_FragCoord.xy + sampleOffset( i ) ) );
-	fragColour = finish( resultBoard( over( sum / float( n ), backdrop( p ) ) ) );
+	vec2 p    = canvasPoint( gl_FragCoord.xy );
+	vec4 game = shadeCraps( CamPos, cameraRay( gl_FragCoord.xy + ( Samples == 4 ? sampleOffset( 0 ) : vec2( 0.0 ) ) ) );
+	bool edge = fwidth( HitId ) > 0.0;
+	if( Samples == 4 || ( Samples == 2 && edge ) )
+	{
+		vec4 sum = Samples == 4 ? game : vec4( 0.0 );
+		for( int i = Samples == 4 ? 1 : 0; i < 4; ++i )
+			sum += shadeCraps( CamPos, cameraRay( gl_FragCoord.xy + sampleOffset( i ) ) );
+		game = sum / 4.0;
+	}
+	fragColour = finish( resultBoard( over( game, backdrop( p ) ) ) );
 }
 )";
 
@@ -2031,6 +2054,7 @@ vec4 shadeLottery( vec3 ro, vec3 rd, int nearCount, int nearList[ MAX_NEAR ] )
 		kind = 4;
 	}
 
+	HitId = float( kind ) * 256.0 + float( ball );
 	vec4 c = vec4( 0.0 );
 	if( kind != 0 )
 	{
@@ -2115,11 +2139,16 @@ void main()
 		if( sc.z > 0.0 && length( gl_FragCoord.xy - sc.xy ) < sc.z )
 			nearList[ nearCount++ ] = i;
 	}
-	int n    = Samples <= 1 ? 1 : 4;
-	vec4 sum = vec4( 0.0 );
-	for( int i = 0; i < n; ++i )
-		sum += shadeLottery( CamPos, cameraRay( gl_FragCoord.xy + sampleOffset( i ) ), nearCount, nearList );
-	fragColour = finish( resultBoard( over( sum / float( n ), backdrop( p ) ) ) );
+	vec4 game = shadeLottery( CamPos, cameraRay( gl_FragCoord.xy + ( Samples == 4 ? sampleOffset( 0 ) : vec2( 0.0 ) ) ), nearCount, nearList );
+	bool edge = fwidth( HitId ) > 0.0;
+	if( Samples == 4 || ( Samples == 2 && edge ) )
+	{
+		vec4 sum = Samples == 4 ? game : vec4( 0.0 );
+		for( int i = Samples == 4 ? 1 : 0; i < 4; ++i )
+			sum += shadeLottery( CamPos, cameraRay( gl_FragCoord.xy + sampleOffset( i ) ), nearCount, nearList );
+		game = sum / 4.0;
+	}
+	fragColour = finish( resultBoard( over( game, backdrop( p ) ) ) );
 }
 )";
 
@@ -2248,7 +2277,7 @@ void main()
 			vec2 ba    = 0.42 * vec2( -k1.y, k1.x ) - vec2( 0.0, 1.0 );
 			float hh   = clamp( dot( q, ba ) / dot( ba, ba ), 0.0, 0.45 );
 			float star = length( q - ba * hh ) * sign( q.y * ba.x - q.x * ba.y );
-			albedo    *= 1.0 - 0.25 * smoothstep( 0.02, -0.02, star );
+			albedo    *= 1.0 - 0.25 * sstep( 0.02, -0.02, star );
 		}
 		else
 			albedo *= 0.75 + 0.25 * step( 0.5, fract( ang * 40.0 / PI ) );
