@@ -62,11 +62,12 @@ painted; a die's S is a rotation of the solid onto itself.
   other games, wrote the harness and the tooling, and found most of the traps
   below. The commits carry the model that wrote them (Claude Opus 5.5), not the
   BRIEF's Fable trailer.
-- **The About block and ATTRIBUTIONS.md are provisional hand copies** (adapted from
-  polyhedral's), because Jackpot is not in stoatworks-backend's projects.json. With
-  no user guide, `guide` is empty and the block has three buttons, so the effect's
-  Mix sits one id earlier than polyhedral's (nothing has shipped). Registering it
-  replaces both files and adds FUNDING.yml and the issue forms.
+- **The About block, ATTRIBUTIONS.md, FUNDING.yml and the issue forms are generated**
+  by stoatworks-backend's sync scripts since Jackpot was registered (2026-10-09). The
+  block has four buttons (the guide among them), so the Over effect's Mix is id 50.
+  A registration change that adds or drops a button moves Mix: the static_assert in
+  Jackpot.cpp names the PT_ABOUT_BUTTON_n to add or remove, then rebuild and run
+  tools/verify.sh before tagging.
 - **2D where the game is seen face on**, 3D where it is not. The slot machine and the
   money wheel are drawn in the canvas (y up, the frame 1 tall at Zoom 1); roulette,
   craps and the lottery are ray-traced from one camera (`SetCamera`: south, Tilt up,

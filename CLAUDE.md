@@ -87,15 +87,12 @@ shader's mirrored constants, or the harness's readbacks.
   constructors nothing references.
 - Randomness is PCG integer hashing, never `fract(sin(...))`; draws are Lemire's
   unbiased multiply-shift.
-- Not yet on GitHub. When it is: a `v*` tag runs `release.yml`; CI only if the repo
-  is public (the fleet's rule for Actions minutes).
+- Public at github.com/stoatworks-labs/jackpot: a `v*` tag runs `release.yml`, and
+  CI runs because the repo is public (the fleet's rule for Actions minutes).
 
 ## Not done yet
 - In Resolume only on this Mac (two plays, 2026-10-09); no OpenFX port, no browser
   demo, no presets.
-- `StoatworksAbout.h` and `ATTRIBUTIONS.md` are provisional hand copies until
-  Jackpot is registered in stoatworks-backend (whose sync scripts then own them,
-  with the issue forms and FUNDING.yml).
 
 ## Diagnostics
 
