@@ -62,6 +62,16 @@ macOS builds are signed and notarised and open normally. The Windows builds are 
 
 <!-- downloads:end -->
 
+[![Jackpot — the casino floor for Resolume](docs/video-thumb.png)](https://www.youtube.com/watch?v=-s5chJo2Idc)
+
+*[Watch it](https://www.youtube.com/watch?v=-s5chJo2Idc) — 68 seconds: the slot machine's jackpot with the
+shower; a near miss; five reels of sevens and bars; roulette landing on 17; the money wheel on
+the joker; craps on 11 at the come-out; the lottery drum drawing six; a fountain of chips and
+coins; and the Over effect on one of Resolume's demo clips, with the clip on the reels. Every
+frame is the real plugins' output: an FFGL plugin has no window, so the footage is rendered by
+this repository's own offline harness (`jptest --film` and `--over --pipe`), not captured from
+Resolume.*
+
 ## The one idea
 
 **Every casino game is decided before it is shown, and every one has a symmetry
