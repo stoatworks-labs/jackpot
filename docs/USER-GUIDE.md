@@ -14,7 +14,9 @@ sets off. Rendered by the plugin's offline harness, not captured from Resolume.*
 
 > **Before you rely on this:** released at **v0.1.0**, and honestly early. It has been loaded
 > into Resolume Arena 7.27.1 on a Mac and played there — a slot jackpot and a roulette spin, each
-> landing as asked, with the shower — and everything else is measured by a harness that drives
+> landing as asked, with the shower. On Windows, both plugins load, register and render in
+> Resolume Arena 7.27.1, with every control as declared, on a machine with software rendering
+> and no GPU; no game was played there. Everything else is measured by a harness that drives
 > the real plugin classes in a headless GL context. Every number of both roulette wheels, every
 > value of the money wheel and every craps total was played, and each came to rest as asked; the
 > harness then reads the result **out of the rendered picture** for the slot machine, the
@@ -363,6 +365,12 @@ slowed or sped up.
 every control; a slot Jackpot and a roulette spin landed as asked, with the shower and the result
 board.
 
+**In Resolume Arena 7.27.1 on Windows** (software rendering, no GPU): both plugins load and
+register, every control is as declared, both render with a font loaded from file, and Resolume's
+log stays clean. Every control that can change the picture without a play was seen doing so
+(25 on SW Jackpot, 27 on SW Jackpot Over). No play was pressed there, so the games themselves
+have not run on Windows.
+
 **Measured**, on an M4 Max under macOS, by the offline harness driving the real plugin classes:
 every reel at rest exactly on its stop, every Result honoured and the pay table as written above;
 the near miss twelve times a jackpot on the virtual reel and twice on the physical one; the reels'
@@ -378,8 +386,9 @@ fail it, and a sweep fails if any control does nothing.
 
 **Assumed, or not verified:**
 
-- **Two plays in one Resolume, on one Mac.** The Over effect, the money wheel, craps and the lottery,
-  Land On against Resolume's tempo, and a saved composition's restore have not been tried in a host.
+- **Two plays in one Resolume, on one Mac, and none on Windows.** The Over effect, the money wheel,
+  craps and the lottery, Land On against Resolume's tempo, and a saved composition's restore have
+  not been tried in a host, nor any play on Windows or on a GPU there.
 - **The physics is its own**, checked against the laws it should obey, not against film of real
   casino equipment. Every friction, bounce and stiffness is chosen to look right.
 - **The roulette frets are flush with the pockets' rims**, and the ball is a point carrying its

@@ -294,6 +294,15 @@ play here came up Random under a lit "Jackpot"; Arena then redrew the row as Ran
 the value the plugin held. A real click sent it. Read the diag log's play line, not the
 panel, for what was played.
 
+On Windows (win-lab, llvmpipe, 2026-10-09) plugin-bench's gate passed 17 of 17 on a
+CI build: registration, all 50/52 controls as declared, render, a clean log. Its
+expectation (`plugin-bench/arena/expect/jackpot.json`) marks 16 controls inert because
+they act only on a play and the gate never presses Play; which ones was measured with
+jptest first (`--play 100000 --frames 60`: Play never pressed, the same frame both
+sides). An idle slot machine is not still: the lamps chase at 3 Hz, so the faint
+controls hold Lights 0 as a precondition. A change to what an idle game draws, or a
+new control, must change that file in the same commit.
+
 ## What is verified, and what is assumed
 
 Verified (numbers in README "Status"): every game shows the result asked for, read

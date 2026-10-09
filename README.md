@@ -2,7 +2,8 @@
 
 > **AI-assisted project.** This codebase was created with [Claude](https://claude.com/claude-code)
 > (Anthropic), directed and reviewed by a human author. It has been loaded into
-> **Resolume Arena 7.27.1 on macOS** and played there (see [Status](#status)); everything
+> **Resolume Arena 7.27.1 on macOS** and played there, and passed the fleet's Arena gate on
+> Windows (see [Status](#status)); everything
 > else below is measured by an offline harness that drives the real plugin classes in
 > a headless GL context. `jptest --roulette` spins for
 > every number of both wheels, and at rest the ball lies in the pocket painted
@@ -144,6 +145,19 @@ On against Arena's transport and a saved composition were not tried there. `oxbo
 probe` reads the bundles as a host does and `oxbow selftest` renders through each. No
 OpenFX port, no browser demo.
 
+**In Resolume Arena 7.27.1 on Windows** (win-lab, Mesa llvmpipe, no GPU,
+2026-10-09): a CI build of this source loads from Extra Effects, `SW Jackpot`
+registers as `JP01`, a source, and `SW Jackpot Over` as `JP02`, an effect; all 50
+and 52 host controls match the declaration in name, order, type, range and default
+(the two names at Resolume's 16-character limit complete); both render, with a font
+loaded from file, and Arena's log stays clean through the run: **17 passed, 0 failed**
+of the fleet gate's checks. The gate never presses Play, so it can only show the
+controls that change an idle picture: 25 on the source and 27 on the effect did,
+none read dead, and Font File alone was inconclusive. The 16 that act only on a play
+(Spin Time, Land On, Result, Fixed Number, Seed, Strip, Blur, Reel Bounce, Rotor
+Speed, Clapper, the lottery's Balls, Draw and Air, Display, Auto Play and Interval)
+were not measured there. Software rendering says nothing about a GPU or about speed.
+
 What is measured, on this machine:
 
 | | |
@@ -177,10 +191,10 @@ wheel **55** (worst 82).
 
 What is **not** verified, and is the honest limit of this release:
 
-- **Two plays in one Arena, on one Mac.** Nothing here has met Arena's transport
-  (whether `barPhase` is a usable downbeat is unmeasured fleet-wide; Land On trusts
-  it), its parameter restore order across a saved composition, or any GPU but this
-  one.
+- **Two plays in one Arena on a Mac, and a gate on Windows that never presses Play.**
+  No play has run on Windows. Nothing here has met Arena's transport (whether
+  `barPhase` is a usable downbeat is unmeasured fleet-wide; Land On trusts it), its
+  parameter restore order across a saved composition, or any GPU but this one.
 - **The physics is mine, and checked, not fitted.** The roulette ball is a point
   carrying its radius on a profile of cones, with one friction for each surface;
   the clapper is a spring that straightens at a third of its stiffness; the

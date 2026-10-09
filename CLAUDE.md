@@ -91,8 +91,8 @@ shader's mirrored constants, or the harness's readbacks.
   CI runs because the repo is public (the fleet's rule for Actions minutes).
 
 ## Not done yet
-- In Resolume only on this Mac (two plays, 2026-10-09); no OpenFX port, no browser
-  demo, no presets.
+- In Resolume: two plays on this Mac, and the Windows gate (17/17, no play pressed),
+  both 2026-10-09; no OpenFX port, no browser demo, no presets.
 
 ## Diagnostics
 
