@@ -30,6 +30,38 @@ or on the next beat or bar.
 and the shower a jackpot sets off. Rendered by the plugin's offline harness
 (`jptest`), not captured from Resolume.</sub>
 
+<!-- downloads:start -->
+
+## Download
+
+**[v0.1.0](https://github.com/stoatworks-labs/jackpot/releases/tag/v0.1.0)** — prebuilt for macOS and Windows. Pick your platform:
+
+<details>
+<summary><b>macOS</b> — Universal (Apple Silicon + Intel)</summary>
+
+| Build | Download | Size |
+| --- | --- | --- |
+| Universal (Apple Silicon + Intel) · .dmg disk image | [`jackpot-0.1.0-macos-universal.dmg`](https://github.com/stoatworks-labs/jackpot/releases/download/v0.1.0/jackpot-0.1.0-macos-universal.dmg) | 1.4 MB |
+| Universal (Apple Silicon + Intel) · .zip archive | [`jackpot-macos-universal.zip`](https://github.com/stoatworks-labs/jackpot/releases/latest/download/jackpot-macos-universal.zip) | 1.3 MB |
+
+</details>
+
+<details>
+<summary><b>Windows</b> — x64</summary>
+
+| Build | Download | Size |
+| --- | --- | --- |
+| x64 · .exe installer | [`jackpot-0.1.0-windows-x86_64-setup.exe`](https://github.com/stoatworks-labs/jackpot/releases/download/v0.1.0/jackpot-0.1.0-windows-x86_64-setup.exe) | 417 KB |
+| x64 · .zip archive | [`jackpot-windows-x86_64.zip`](https://github.com/stoatworks-labs/jackpot/releases/latest/download/jackpot-windows-x86_64.zip) | 669 KB |
+
+</details>
+
+All builds, checksums and release notes: [github.com/stoatworks-labs/jackpot/releases](https://github.com/stoatworks-labs/jackpot/releases).
+
+macOS builds are signed and notarised and open normally. The Windows builds are unsigned, so SmartScreen warns once.
+
+<!-- downloads:end -->
+
 ## The one idea
 
 **Every casino game is decided before it is shown, and every one has a symmetry
