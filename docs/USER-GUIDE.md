@@ -109,7 +109,7 @@ plugin, weighted the way the real game is, rather than left to however the physi
 
 On roulette, the money wheel, craps and the lottery the play starts a frame or two after the
 press, because the game is worked out on another thread first (about 1 ms for craps, 13 for
-roulette, 50 for the lottery and the money wheel).
+roulette, 47 for the lottery with 49 balls and 55 for the money wheel, 82 at worst).
 
 ---
 
