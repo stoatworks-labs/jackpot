@@ -13,8 +13,8 @@
 > `--roulette-readback`, `--wheel-readback` and `--slots-readback` then read the
 > result **out of the rendered pixels**. `--duration` brings every game to rest at
 > exactly Spin Time, still moving a frame before. `jptest --negative` re-runs the
-> checks against 21 deliberately wrong models and `tools/mutate.sh` changes one
-> character of the shipped shaders and C++ ten times; every one is caught. A
+> checks against 24 deliberately wrong models and `tools/mutate.sh` changes one
+> character of the shipped shaders and C++ twelve times; every one is caught. A
 > control sweep fails if any parameter does nothing.
 
 The casino floor for Resolume Arena/Avenue, as two FFGL plugins: **SW Jackpot**, a
@@ -118,7 +118,8 @@ What falls out of it:
   mouth goes up it and rolls along the rack.
 - **Chips and coins as rigid discs**: tumbling in the air, bouncing, rolling on
   edge and, as they lean over, whirring faster and faster like Euler's disk
-  before they slap flat into the pile.
+  before they slap flat into the pile — which clears itself, each piece fading
+  12 s after it was thrown.
 
 ![Six frames: the slot machine on a win, the roulette wheel at rest on 17 black, the money wheel on $20, a craps table on 11, the lottery drum with six balls on the rack, a fountain of chips and coins](docs/set.png)
 
@@ -175,6 +176,13 @@ composition restores both.
 **v0.1.0, 2026-10-09, and honestly early.** User guide:
 [stoatworks-labs.com/software/jackpot/guide](https://stoatworks-labs.com/software/jackpot/guide/).
 
+**Since v0.1.0, unreleased:** the shower's pile clears itself (jackpot#3: every piece
+fades 12 s after it is thrown, the oldest go early when the pool is nearly full, pieces
+off the table front or back are gone, and the height field drains with the pile) and
+Game and Play sit at the top of the panel, outside the Game group (jackpot#2). Both
+are measured by the harness below (`--pile`, `--names`) and have **not** been run in
+Resolume.
+
 **In Resolume Arena 7.27.1 on macOS** (this Mac, Apple M4 Max, 2026-10-09): Arena's log
 registers `'SW Jackpot' uid: JP01 category: 3` and `'SW Jackpot Over' uid: JP02
 category: 1`, each loading in under half a second. SW Jackpot dropped into a clip
@@ -213,13 +221,14 @@ What is measured, on this machine:
 | money wheel | every value, Fixed, 35 spins over 18 segments; the wheel turned 1, 7, 27 and 53 segments, the pegs and the clapper **bit-identical**; every one of 114 peg passages took energy, the median 1.46 J against the bearing's 0.058 J a segment; Random chi-square 65.1 over the segments (critical 90.6), 8.0 over the values (22.7); 14 of 14 read from the picture |
 | craps | every total 2–12, 44 throws: the faces on top of the dice **as drawn** add up to it; every throw reached the back wall, every die flat on the felt, none inside the other; the pass line through a scripted shooter; Win and Lose against every point, 84 of 84 |
 | lottery | 16 draws of 10 to 75 balls: the rack, left to right, shows the numbers drawn; the paint a permutation every time; every drawn ball rises up the tube; balls never overlap more than 1.75 mm (bound 3) nor leave the glass; Random chi-square 41.3 (critical 84.1) |
-| shower | a coin falling face on for 1.5 s within 0.009 of the closed form under quadratic drag (bound 0.019, g T dt); a tumbling chip keeps its angular momentum to 0.48% while its axis wobbles; 1.1 million contact steps, none added energy; 277 pieces at rest, all flat; **Euler's disk**: the contact's rate within 6% of Ω² = 4 g / (r sin α) from 7° to 1.3° of lean, rising 2.5× |
+| shower | a coin falling face on for 1.5 s within 0.009 of the closed form under quadratic drag (bound 0.019, g T dt); a tumbling chip keeps its angular momentum to 0.48% while its axis wobbles; 0.96 million contact steps, none added energy; **every one of 362 pieces judged**: 249 at rest (247 flat within 1°, 2 laid as they lay, steeper than the 16° gate), 75 gone off the frame or the table, 38 still rolling and none of those stuck; **Euler's disk**: the contact's rate within 6% of Ω² = 4 g / (r sin α) from 7° to 1.3° of lean, rising 2.5× |
+| pile | chips, three presses of Shower Now, coins, three more, then quiet: **0 of 1,223** pieces left 30 s after the last (0.1.0: 743 of 1,080, 363 of them chips); Always at Amount 1.0 for a minute, **4,000 of 4,000** thrown in its last 10 s (0.1.0: 234), and still 4,000 after twelve minutes in a longer run; no piece ever past the table's edge in z (0.1.0: 21.9 frame heights past); the table flat once the pile has gone and after Pile off and on (0.1.0: 0.029 and 0.049 left) |
 | duration | every game, Spin Time 3, 6 and 12 s: at rest at Spin Time, moving a frame before, still after; Land On, 64 waits each ending on a beat or bar boundary |
 | Over | the clip (premultiplied, alpha and all) untouched where there is no game and everywhere at Mix 0, to 1.2×10⁻⁷ |
-| the rest | defaults, names (unique as Arena addresses them, no '/'), determinism (the same seed is the same play to the bit), resize mid-shower, fonts by name, missing and by file, credits and the craps point carried between plays, the roulette ring never jumping at a Play, and a slot pull mid-spin carrying the reels on from where they are |
+| the rest | defaults, names (unique as Arena addresses them, no '/'; Game and Play outside every group, each group one run of ids), determinism (the same seed is the same play to the bit), resize mid-shower, fonts by name, missing and by file, credits and the craps point carried between plays, the roulette ring never jumping at a Play, and a slot pull mid-spin carrying the reels on from where they are |
 | tables | the dice's face loops, groups and labels identical from arm64 with fused multiply-adds, arm64 without, and x86_64 (polyhedral's check) |
-| negative controls | **21** deliberately wrong models, **all 21** detected |
-| mutants | **10** one-character changes (three GLSL, seven C++), **all 10** caught |
+| negative controls | **24** deliberately wrong models, **all 24** detected |
+| mutants | **12** one-character changes (three GLSL, nine C++), **all 12** caught |
 | dead controls | **46** parameters over both plugins, all live |
 
 Render cost (`jptest --bench`, mid-play, the median frame on an Apple M4 Max on a
@@ -255,7 +264,9 @@ What is **not** verified, and is the honest limit of this release:
   craps and the lottery are ray-traced 3D. Light Angle and Tilt act on those three
   and the shower only.
 - **A piece settling into the pile is turned flat**, by up to 11° (the gate is
-  16°); the pile is a height field, not a stack of bodies.
+  16°); one that stops steeper, leaning on a step of the pile, stays as it lies.
+  The pile is a height field, not a stack of bodies: when a piece fades, the
+  field is rebuilt and those lying on it drop onto what is under them.
 - **Above 1080p, edges the 2×2 pixel quads cannot see are single-sampled**: an
   edge between two quads is one ray, not four.
 
@@ -288,6 +299,7 @@ play on the render thread so every run is the same run:
     ./build/jptest --craps            every total, the throw, the pass line
     ./build/jptest --lottery          the rack, the permutation, the drum
     ./build/jptest --shower           flight, energy, the pile, Euler's disk
+    ./build/jptest --pile             the pile clears, stays on the table, never stalls
     ./build/jptest --duration         every game at rest at Spin Time
     ./build/jptest --defaults --names --determinism --over-check --resize --fonts --state
     ./build/jptest --negative         every check above against a wrong model
@@ -296,7 +308,7 @@ play on the render thread so every run is the same run:
     tools/mutate.sh                   one character changed, a check must fail
     python3 tools/sweep.py            no control is silently dead
     ./build/jptest --bench            720p through 4K, and the planners' cost
-    tools/verify.sh                   all of it, in about three minutes
+    tools/verify.sh                   all of it, in about five minutes
 
 `--set` takes an option by its name or its index, and refuses a value that is
 neither. Filming uses the fleet's frame format and cue sheets (a press of Play is

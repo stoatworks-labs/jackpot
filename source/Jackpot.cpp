@@ -242,7 +242,11 @@ JackpotPlugin::JackpotPlugin( bool effect ) : isEffect( effect )
 	standard( PT_TILT, "Tilt" );
 	standard( PT_ZOOM, "Zoom" );
 
-	for( unsigned int id = PT_GAME; id <= PT_INTERVAL; ++id )
+	//Game and Play stand at the top, in no group, so Play is there with the
+	//Game group closed (jackpot#2). A parameter has one group, and Resolume
+	//makes a group of each run of consecutive ids that share one, so the
+	//group starts after them; nothing is renumbered (`--names` holds both).
+	for( unsigned int id = PT_SPIN_TIME; id <= PT_INTERVAL; ++id )
 		SetParamGroup( id, "Game" );
 	for( unsigned int id = PT_REELS; id <= PT_REEL_BOUNCE; ++id )
 		SetParamGroup( id, "Slots" );

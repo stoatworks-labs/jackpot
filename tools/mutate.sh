@@ -32,6 +32,8 @@ MUTANTS=(
 	"source/Slots.cpp|constexpr int kNextToSeven = 6;|constexpr int kNextToSeven = 1;|--nearmiss|C++: the virtual stops beside the seven, 6 -> 1"
 	"source/Common.cpp|p.rateStart    = p.warp / ( 1.0 - 0.5 * k );|p.rateStart    = p.warp / ( 1.0 - 0.6 * k );|--duration|C++: the eased playback's start rate, 0.5 -> 0.6"
 	"source/Shower.cpp|p.radius * p.radius : 0.5 * p.radius * p.radius;|p.radius * p.radius : 0.6 * p.radius * p.radius;|--shower|C++: a disc's axial moment of inertia, 0.5 -> 0.6"
+	"source/Shower.cpp|\t\tp.age += dt;|\t\tp.age -= dt;|--pile|C++: a piece's age, += -> -= (it never reaches its linger)"
+	"source/Shower.cpp|if( pieces[ i ].fadeRate < 1.0 / kQuickFade )|if( pieces[ i ].fadeRate > 1.0 / kQuickFade )|--pile|C++: the cap's choice of a piece to fade, < -> > (it fades none)"
 	"source/Geometry.cpp|Length( solid.group[ g ] * a - b ) < 1e-9|Length( solid.group[ g ] * a + b ) < 1e-9|--craps|C++: the symmetry that takes the wanted face to the top, - -> +"
 )
 

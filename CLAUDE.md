@@ -35,19 +35,22 @@ shader's mirrored constants, or the harness's readbacks.
   `./build/jptest --shaders --out DIR`
 
 ## Verify
-- Everything: `tools/verify.sh` (~3 min: reserved words and reversed smoothsteps,
+- Everything: `tools/verify.sh` (~5 min: reserved words and reversed smoothsteps,
   glslc, the pin, a fresh universal build, both bundles through lipo/plist/codesign/
   oxbow probe+selftest, the programs through the driver, every check, `--offline`,
   the dice tables across three builds, the `--pipe` format, the negative controls,
   the mutants, the sweep, the bench)
 - **The results**: `--slots`, `--roulette`, `--wheel`, `--craps`, `--lottery`;
   out of the pixels: `--slots-readback`, `--roulette-readback`, `--wheel-readback`.
-- **The physics**: `--nearmiss`, `--blur`, `--shower`, `--duration`, and the
-  C37/C54 identities, the departure and the clapper inside `--roulette`/`--wheel`.
-- **The plugin**: `--defaults`, `--names`, `--determinism`, `--over-check`,
-  `--resize`, `--fonts`, `--state`.
-- **The checks can fail**: `--negative` (21 wrong models), `tools/mutate.sh`
-  (three GLSL and seven C++ one-character mutants).
+- **The physics**: `--nearmiss`, `--blur`, `--shower`, `--pile` (the pile clears,
+  stays on the table, never stalls the pool, leaves the table flat: jackpot#3),
+  `--duration`, and the C37/C54 identities, the departure and the clapper inside
+  `--roulette`/`--wheel`.
+- **The plugin**: `--defaults`, `--names` (also: Game and Play in no group, every
+  group one run of ids: jackpot#2), `--determinism`, `--over-check`, `--resize`,
+  `--fonts`, `--state`.
+- **The checks can fail**: `--negative` (24 wrong models), `tools/mutate.sh`
+  (three GLSL and nine C++ one-character mutants).
 - What CI runs: `--offline` (the checks that need no GL context, and their
   negative controls; says loudly that the pixel checks were not run) and
   `tools/glslc.sh`.
@@ -58,6 +61,12 @@ shader's mirrored constants, or the harness's readbacks.
 ## Notes
 - **Units are metres, kilograms, seconds** in the games; the shower's world is in
   frame heights and scales its physics by the piece's real size.
+- **The shower's pile ages** (0.1.1): every piece fades `Shower::kLinger` (12 s) after
+  it is thrown, the cap fades the oldest past 90% of the 900-piece pool, |z| past the
+  table is culled, and the height field is rebuilt whenever a piece at rest goes. No
+  control; never clear it on a Pieces change. AGENTS.md "The pile, and how it goes".
+- **Game and Play are in no parameter group**; the Game group starts at Spin Time.
+  Resolume groups each run of consecutive ids, so a group must stay one run (`--names`).
 - **Every game draws its result by turning paint, never the physics.** Roulette's
   frets and the money wheel's pegs see only the FRACTIONAL part of their angle in
   pockets/segments; whole ones are invisible by construction, which is what makes
@@ -92,7 +101,8 @@ shader's mirrored constants, or the harness's readbacks.
 
 ## Not done yet
 - In Resolume: two plays on this Mac, and the Windows gate (17/17, no play pressed),
-  both 2026-10-09; no OpenFX port, no browser demo, no presets.
+  both 2026-10-09; no OpenFX port, no browser demo, no presets. The 0.1.1 fixes
+  (jackpot#2, #3) have not been run in Resolume.
 
 ## Diagnostics
 

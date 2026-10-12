@@ -20,10 +20,12 @@ sets off. Rendered by the plugin's offline harness, not captured from Resolume.*
 > the real plugin classes in a headless GL context. Every number of both roulette wheels, every
 > value of the money wheel and every craps total was played, and each came to rest as asked; the
 > harness then reads the result **out of the rendered picture** for the slot machine, the
-> roulette wheel and the money wheel. Every game stops at exactly Spin Time. Twenty-one
-> deliberately wrong models are all detected, ten one-character changes to the shipped code are
-> all caught, and all 46 controls across the two plugins measurably do something. Try it on a
-> spare layer before you put it in a show.
+> roulette wheel and the money wheel. Every game stops at exactly Spin Time. Twenty-four
+> deliberately wrong models are all detected, twelve one-character changes to the shipped code are
+> all caught, and all 46 controls across the two plugins measurably do something. Two changes
+> since v0.1.0 — the shower's pile now clears itself, and **Play** sits at the top of the panel —
+> are measured by the harness only and have **not yet been run in Resolume**. Try it on a spare
+> layer before you put it in a show.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human author.
 
@@ -107,7 +109,11 @@ press: the game is worked out on another thread first (about 1 ms for craps, 13 
 
 ---
 
-## The Game group
+## Game, Play and the Game group
+
+**Game** and **Play** stand at the top of the panel, outside every group, so Play is there to
+press with all the groups closed. The **Game** group under them holds the rest, from Spin Time to
+Interval.
 
 - **Game** — *Slots*, *Roulette*, *Money Wheel*, *Craps*, *Lottery*, *Shower Only*. Changing it
   lays the new game out at once, at rest.
@@ -246,7 +252,16 @@ land in a pile along the foot of the frame.
 - **Pieces** — *Chips*, *Coins* or *Mixed*.
 - **Amount** — how many fall each second, up to about 400.
 - **Piece Size** — a chip's width as a share of the frame's height, 2% to 20%.
-- **Pile** — on, the pieces settle into a pile; off, they fall out of the frame.
+- **Pile** — on, the pieces settle into a pile; off, they fall out of the frame, and the pile
+  there fades away in half a second.
+
+**The pile clears itself.** Every piece fades twelve seconds after it was thrown — about ten
+seconds lying in the pile — oldest first, so a win's pile is gone about fifteen seconds after the
+shower began, and a run of wins keeps one pile that renews itself. A heavy or constant shower
+fills the plugin's 900 pieces quickly; then the oldest go early, in a fifth of a second, so the
+shower never stops for want of room. A piece that rolls off the table, at the sides, the front or
+the back, is gone. Changing **Pieces** does not sweep the table: the old kind fades out with its
+age, within about twelve seconds. The twelve seconds are fixed, not a control.
 
 *Shower Only* as the Game is the shower on its own: Play is a burst.
 
@@ -361,9 +376,9 @@ slowed or sped up.
 
 ## What is verified, and what is assumed
 
-**In Resolume Arena 7.27.1 on a Mac:** both plugins load and register; SW Jackpot in a clip shows
-every control; a slot Jackpot and a roulette spin landed as asked, with the shower and the result
-board.
+**In Resolume Arena 7.27.1 on a Mac** (v0.1.0): both plugins load and register; SW Jackpot in a
+clip shows every control; a slot Jackpot and a roulette spin landed as asked, with the shower and
+the result board.
 
 **In Resolume Arena 7.27.1 on Windows** (software rendering, no GPU): both plugins load and
 register, every control is as declared, both render with a font loaded from file, and Resolume's
@@ -380,7 +395,10 @@ pockets leaving the ball's path identical to the bit, and the ball leaving the t
 physics of a banked track says; every money-wheel value under the clapper, and the clapper taking the
 energy; every craps total on the dice as drawn, and the pass line; the lottery's rack showing the
 numbers drawn; the chips' fall, tumble, bounce, pile and Euler's whirr against the laws they should
-obey; Random fair by chi-square; every game stopping at Spin Time and on the beat; the clip untouched
+obey; the pile clearing within thirty seconds of the last shower, no piece left off the table, a
+constant shower at full Amount still throwing everything asked of it after a minute, and the
+table flat again once the pile has gone or Pile is switched off and on; Game and Play outside every
+group; Random fair by chi-square; every game stopping at Spin Time and on the beat; the clip untouched
 by the effect where it must be. Every check also runs against a deliberately wrong model and must
 fail it, and a sweep fails if any control does nothing.
 
@@ -389,12 +407,16 @@ fail it, and a sweep fails if any control does nothing.
 - **Two plays in one Resolume, on one Mac, and none on Windows.** The Over effect, the money wheel,
   craps and the lottery, Land On against Resolume's tempo, and a saved composition's restore have
   not been tried in a host, nor any play on Windows or on a GPU there.
+- **The pile's clearing and Play's place at the top of the panel are new since v0.1.0** and have
+  been measured only by the harness, not yet seen in Resolume. That Resolume draws Game and Play
+  outside the groups follows from how it groups parameters; it has not been looked at.
 - **The physics is its own**, checked against the laws it should obey, not against film of real
   casino equipment. Every friction, bounce and stiffness is chosen to look right.
 - **The roulette frets are flush with the pockets' rims**, and the ball is a point carrying its
   radius.
-- **A chip settling into the pile is laid flat** (by up to about ten degrees), and the pile is a
-  height field, not a stack of bodies.
+- **A piece that comes to rest within 16 degrees of flat is laid flat** (by up to about eleven, in
+  practice); steeper, leaning on a step of the pile, it stays as it lies. The pile is a height
+  field, not a stack of bodies: when a piece fades, those lying on it drop onto what is under it.
 - **The same seed gives the same results everywhere**, because they come from the plugin's own
   random numbers or your bet. The motion itself may differ between a Mac and a Windows machine.
 - **The inspector shows slider positions**, not seconds or degrees. This guide gives the ranges.

@@ -43,7 +43,7 @@ painted; a die's S is a rotation of the solid onto itself.
     MoneyWheel.*     the wheel against its clapper; the plan
     Craps.*          the throw on polyhedral's engine; the pass line
     Lottery.*        spheres in a sphere, the air, the tube; the deal
-    Shower.*         live rigid discs, the pile as a height field
+    Shower.*         live rigid discs; the pile, a height field that ages away
     Typeface.*       polyhedral's font scan and SDF atlas, widened to capitals
     Shaders.*        one pass per game, the shower's instances, the composite;
                      shaders::Programs(), the one list
@@ -91,6 +91,17 @@ painted; a die's S is a rotation of the solid onto itself.
   that runs between two quads is single-sampled; at 4K that is a small pixel.
 - **The shower is seen from 15 degrees above, orthographically.** Straight on, the
   pieces in the pile were edge-on lines.
+- **The pile lasts a fixed 12 s, not a control** (0.1.1, jackpot#3). Allan chose a
+  fixed linger over a new parameter: no new id, nothing for a saved composition to
+  restore. Twelve seconds from the throw is about ten lying in the pile, which outlasts
+  the next play after a win at the defaults (Auto Play every 10 s, Spin Time 4 s), so
+  a run of wins keeps one pile; a single win's pile is gone about 15 s after its
+  shower began. A Pieces change does not clear the table: the old kind ages out.
+- **Game and Play are in no group** (0.1.1, jackpot#2). FFGL gives a parameter one
+  group, and Resolume makes a group of each run of consecutive ids that share a name,
+  so with the Game group closed Play was hidden. The group starts at Spin Time now;
+  nothing was renumbered (ids are append-only) and Arena stores parameters by name.
+  `--names` holds Play ungrouped and every group one run of ids.
 - **No presets, no audio trigger, no history board, no pay table on screen** in
   0.1.0; the spec's out-of-scope list (cards, pachinko, OpenFX, browser demo, Arena
   gate) stands.
@@ -117,6 +128,72 @@ aims the natural time at the duration by choosing the launch:
   the sweep plus at most 0.6× slow motion.
 - **The lottery** spreads mixing and the gaps between draws over what is left after
   loading; under about 6 s it cannot keep up and plays fast (3 s: about 3×).
+
+## The pile, and how it goes (0.1.1)
+
+jackpot#3, reproduced in Arena 7.27.1 on Windows with the 0.1.0 DLL: chips showered,
+Pieces switched to Coins, and the chips stayed; with Shower Off the pile did not change
+for two minutes, and only Pile off cleared it. Four causes in `Shower.cpp`:
+
+- **Nothing aged.** The only drain was a count cap: past 700 pieces *at rest*, the
+  oldest faded. Now every piece has an `age`, and at `kLinger` (12 s from the throw)
+  it fades in `kFadeTime` (0.5 s). The list is kept in throw order (appended, removed
+  in place), so its front is the oldest.
+- **A piece that stopped on a slant never came to rest.** The settle asked for the
+  tilt to be within 16°; pieces stopped at 17–26° against a step of the height field
+  were still for ever, never faded, and the cap never counted them. Now any piece in
+  contact and still for 0.25 s comes to rest: within 16° it is laid flat as before,
+  steeper it stays as it lies, and `Stamp` raises the field to its tilted face.
+- **Nothing left the table front or back.** Only y and |x| were culled and `FloorAt`
+  is flat past the grid, so chips rolled to z = −22. Now a piece past |z| = 0.6
+  (`kTableHalfZ`, the grid's edge) fades in `kQuickFade` (0.2 s) and is culled a
+  radius further on. The back edge is on screen (about a quarter of the way up, seen
+  from 15° above), so a slow roller fades rather than popping out.
+- **The height field only rose.** `Settle` wrote heights as a max and nothing lowered
+  them, so new pieces landed on faded, invisible ones, and Pile off and on left the
+  old pile's height behind. Now whenever a piece at rest goes (or Pile changes) the
+  field is rebuilt (`Rebuild`) from the pieces still at rest, in the order they came
+  to rest, each brought down onto what is now under it, so nothing floats; with Pile
+  off it is empty.
+
+Because of the second and third, under Always the 900-piece pool filled with pieces
+that never left and the shower stopped throwing: at the default Amount, 17 of 810 in
+the ten seconds to the fifth minute and 0 to 9 from the sixth on (a 15-minute probe). The cap now counts **every** piece, in the air or not, and past 90% of the
+pool (`kCapPieces`, 810) fades the oldest in 0.2 s: 90 places freed every 0.2 s pass
+450 pieces a second, more than Amount's 400. At Amount 1.0 a piece then lasts about
+two seconds, so the pool, not the linger, sets how deep the pile gets: a churn, not
+a heap.
+
+`--pile` measures all of it (A–D below; 0.1.0's numbers from the same harness built
+against 0.1.0's `Shower`, with the new fields shimmed in):
+
+| | 0.1.0 | 0.1.1 |
+| --- | --- | --- |
+| A: Chips, three Shower Nows, Coins, three more, quiet; 30 s after the last | 743 of 1,080 left, 363 of them chips | 0 of 1,223 |
+| B: furthest any piece's near rim got past the table's edge in z | 21.9 (z = −22.5) | 0 |
+| C: Always at Amount 1.0 for 60 s, thrown in the last 10 s of 4,000 | 234 | 4,000 |
+| D: the most FloorAt stands above the floor, once empty / after Pile off and on | 0.029 / 0.049 | 0 / 0 |
+
+A 12-minute run of C threw 4,000 of 4,000 in its last ten seconds; 15 minutes at the
+default Amount, 810 of 810. The negative controls switch each mechanism off
+(`ShowerSettings::noAgeing` fails A, C and D; `noEdgeCull` fails B; `noRebuild` fails
+D), and two mutants pin the shipped lines (the age's `+=`; the cap's choice of a
+piece). `--pile` costs about 12 s, most of it C's minute at 400 pieces a second.
+
+`--shower` used to judge only the pieces that passed the settle gate (277 of 362):
+the rest were off the frame, still rolling, or stuck on a slant, and nothing told
+them apart. It now judges every piece: at rest (flat, or laid as it lay), gone, or
+still moving -- and a piece still moving must be moving: a copy stepped on for half
+a second comes to rest, travels a thousandth of a frame or turns a degree. On a
+dense pile (eight presses, 60 s) that finds 46 stuck pieces of 82 unsettled in 0.1.0
+(tilted 17–26°) and none in 0.1.1. The check's own scenario had none stuck even in
+0.1.0, so its census guards the gate rather than reproducing #3; `--pile` does that.
+
+Known and left: a piece at rest across the edge of a step of the pile can fall into
+a limit cycle -- pushed up out of the step by the position correction and falling
+back, eight steps round -- at up to 2.6 cm/s instantaneously while going nowhere
+(0.09 thousandths of a frame in half a second), so the stillness test never passes
+and it is never stamped. It ages out with the rest. Seen once in 306 pieces of a dense pile.
 
 ## The traps, in the order they cost time
 
@@ -235,8 +312,8 @@ sweep). The worktree guard keys on the session's starting directory, so a bare
 ## Would this hold on another rasteriser, at another raster?
 
 - `--slots`, `--nearmiss`, `--roulette`, `--wheel`, `--craps`, `--lottery`,
-  `--shower`, `--duration`, `--defaults`, `--names`, `--determinism`: CPU, double,
-  no rasteriser. **Trajectories are not promised identical across architectures**
+  `--shower`, `--pile`, `--duration`, `--defaults`, `--names`, `--determinism`: CPU,
+  double, no rasteriser. **Trajectories are not promised identical across architectures**
   (clang fuses multiply-adds on arm64, x86_64 has another libm, MSVC differs again),
   so the same seed may spin differently on a Windows rig. The RESULTS are identical
   everywhere: they come from the integer draw or Fixed Number. The C37 and C54
@@ -260,7 +337,7 @@ sweep). The worktree guard keys on the session's starting directory, so a bare
 
 ## Mutation testing
 
-`tools/mutate.sh`, ten one-character mutants, each caught by the named check:
+`tools/mutate.sh`, twelve one-character mutants, each caught by the named check:
 
 | mutant | caught by |
 | --- | --- |
@@ -273,6 +350,8 @@ sweep). The worktree guard keys on the session's starting directory, so a bare
 | C++ the virtual stops beside the seven: 6 → 1 | `--nearmiss` (12.3 per jackpot falls to 2.1) |
 | C++ the eased playback's start rate: `0.5 * k` → `0.6` | `--duration` (craps stops early) |
 | C++ a disc's axial moment: `0.5` → `0.6` | `--shower` (the tumble, and Euler's disk) |
+| C++ a shower piece's age: `+=` → `-=` | `--pile` (771 of 1,223 left 30 s after the last press) |
+| C++ the cap's choice of a piece to fade: `<` → `>` | `--pile` (Always at Amount 1.0 throws 1,147 of 4,000) |
 | C++ polyhedral's symmetry search: `a - b` → `+` | `--craps` (40 of 44 wrong) |
 
 ## The sweep's context table
@@ -310,8 +389,9 @@ from the plan as drawn and, for slots, roulette and the money wheel, out of the
 pixels; the C37 and C54 identities to the bit; the ball's departure law; the
 clapper's energy; fairness by chi-square; the virtual reel's near-miss rate; the
 shutter's integral; the pass line; the lottery's deal; free fall under drag, the
-tumble, energy at contact and Euler's disk; Spin Time and Land On; the clip under
-the effect; fonts; the state between plays.
+tumble, energy at contact and Euler's disk; the pile clearing, staying on the table,
+never stalling the pool and leaving the table flat; Spin Time and Land On; the clip
+under the effect; fonts; the state between plays; Game and Play outside every group.
 
 Assumed or chosen, not measured:
 
@@ -327,5 +407,7 @@ Assumed or chosen, not measured:
 ## Not done
 
 In Resolume only on this Mac, two plays (README "Status"); no OpenFX port, browser
-demo or presets. The workflows exist and have never run (there is no GitHub repo); turn
+demo or presets. The 0.1.1 fixes (the pile, jackpot#3; Play at the top, jackpot#2)
+have been measured by the harness only, never run in Resolume: on Windows, watch a
+pile clear about 15 s after its shower began, and Play outside the closed Game group. The workflows exist and have never run (there is no GitHub repo); turn
 them on only if the repo is public.

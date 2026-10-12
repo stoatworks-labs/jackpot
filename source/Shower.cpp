@@ -14,6 +14,9 @@ constexpr double kSpinDamp   = 0.15;   ///< 1/s while touching: the felt
 constexpr double kSettleSpeed = 0.012; ///< m/s
 constexpr double kSettleSpin  = 2.0;   ///< rad/s
 constexpr double kSettleFor   = 0.25;  ///< s
+/// cos 16.3 degrees: a piece that comes to rest nearer flat than this is laid
+/// flat; steeper, it stopped leaning on a step of the pile and is laid as it lies.
+constexpr double kLayFlat     = 0.96;
 
 /// Chip denominations' share of a shower: white, red, green, black, purple, orange.
 const int kColourWeights[ 6 ] = { 3, 6, 5, 3, 2, 1 };
@@ -58,6 +61,26 @@ double Kinetic( const Piece& p, const M3& r, bool ball )
 	const V3 wb = Transpose( r ) * p.w;
 	return 0.5 * Dot( p.v, p.v ) + 0.5 * ( across * ( wb.x * wb.x + wb.y * wb.y ) + axial * wb.z * wb.z );
 }
+
+/// The lowest point of each rim, world: what a disc stands on.
+int LowestRims( const Piece& p, V3 out[ 2 ] )
+{
+	const V3 axis = ToMatrix( p.q ) * V3 { 0, 0, 1 };
+	V3 down       = V3 { 0, -1, 0 } - axis * Dot( V3 { 0, -1, 0 }, axis );
+	const double dl = Length( down );
+	if( dl <= 1e-6 )
+		return 0;
+	down     = down * ( 1.0 / dl );
+	out[ 0 ] = p.x + down * p.radius + axis * p.half;
+	out[ 1 ] = p.x + down * p.radius - axis * p.half;
+	return 2;
+}
+
+/// Start a piece on its way out, over `seconds`; one already going faster goes on so.
+void StartFade( Piece& p, double seconds )
+{
+	p.fadeRate = std::max( p.fadeRate, 1.0 / seconds );
+}
 } // namespace
 
 double Shower::MetresPerUnit( const Piece& ) const
@@ -83,6 +106,7 @@ void Shower::Clear()
 	pieces.clear();
 	heights.assign( static_cast< size_t >( kGrid * kGrid ), 0.0f );
 	remaining = owed = carry = 0.0;
+	pileWas   = settings.pile;
 }
 
 void Shower::Start( double seconds, double scale )
@@ -150,30 +174,84 @@ Piece Shower::Spawn()
 
 void Shower::Settle( Piece& p )
 {
-	//Laid flat, turned about the vertical as it lay, onto the pile.
-	const M3 r     = ToMatrix( p.q );
-	const V3 n     = r * V3 { 0, 0, 1 };
-	const V3 up    = { 0, n.y >= 0.0 ? 1.0 : -1.0, 0 };
-	worstSnap      = std::max( worstSnap, std::acos( std::clamp( std::fabs( n.y ), 0.0, 1.0 ) ) * 180.0 / kPi );
-	const M3 flat  = dice::Align( n, up ) * r;
-	p.q            = dice::FromMatrix( flat );
-	p.x.y          = FloorAt( p.x.x, p.x.z ) + p.half;
-	p.v = p.w      = {};
-	p.resting      = true;
+	const M3 r = ToMatrix( p.q );
+	const V3 n = r * V3 { 0, 0, 1 };
+	//Nearly flat: laid flat, turned about the vertical as it lay. Steeper, it
+	//is leaning on a step of the pile and stays as it lies (in 0.1.0 it never
+	//came to rest, so it never faded and the cap never counted it).
+	if( std::fabs( n.y ) > kLayFlat )
+	{
+		const V3 up = { 0, n.y >= 0.0 ? 1.0 : -1.0, 0 };
+		worstSnap   = std::max( worstSnap, std::acos( std::clamp( std::fabs( n.y ), 0.0, 1.0 ) ) * 180.0 / kPi );
+		p.q         = dice::FromMatrix( dice::Align( n, up ) * r );
+		p.x.y       = FloorAt( p.x.x, p.x.z ) + p.half;
+	}
+	p.v = p.w = {};
+	p.resting = true;
+	p.rested  = restings++;
 	if( heights.empty() )
 		heights.assign( static_cast< size_t >( kGrid * kGrid ), 0.0f );
-	const double top = p.x.y + p.half - kFloor;
-	for( int iz = 0; iz < kGrid; ++iz )
-		for( int ix = 0; ix < kGrid; ++ix )
+	Stamp( p );
+}
+
+void Shower::Stamp( const Piece& p )
+{
+	//Each cell under the disc rises to the disc's upper face over the cell's
+	//middle: the plane through the middle, n . d = 0, then half the thickness
+	//along the vertical. Flat, that is the centre's height plus half, over a
+	//circle of 0.89 of the radius (a touch inside the rim).
+	const V3 n        = ToMatrix( p.q ) * V3 { 0, 0, 1 };
+	const double ny   = std::max( std::fabs( n.y ), 1e-3 );
+	const double sy   = n.y >= 0.0 ? ny : -ny;
+	const double rise = std::sqrt( std::max( 0.0, 1.0 - n.y * n.y ) ) * p.radius + ny * p.half;
+	const double cellX = 2.0 * kGridHalfX / kGrid, cellZ = 2.0 * kGridHalfZ / kGrid;
+	const int x0 = std::max( 0, static_cast< int >( std::floor( ( p.x.x - p.radius + kGridHalfX ) / cellX ) ) );
+	const int x1 = std::min( kGrid - 1, static_cast< int >( std::floor( ( p.x.x + p.radius + kGridHalfX ) / cellX ) ) );
+	const int z0 = std::max( 0, static_cast< int >( std::floor( ( p.x.z - p.radius + kGridHalfZ ) / cellZ ) ) );
+	const int z1 = std::min( kGrid - 1, static_cast< int >( std::floor( ( p.x.z + p.radius + kGridHalfZ ) / cellZ ) ) );
+	for( int iz = z0; iz <= z1; ++iz )
+		for( int ix = x0; ix <= x1; ++ix )
 		{
-			const double cx = -kGridHalfX + ( ix + 0.5 ) * 2.0 * kGridHalfX / kGrid;
-			const double cz = -kGridHalfZ + ( iz + 0.5 ) * 2.0 * kGridHalfZ / kGrid;
-			if( ( cx - p.x.x ) * ( cx - p.x.x ) + ( cz - p.x.z ) * ( cz - p.x.z ) <= p.radius * p.radius * 0.8 )
-			{
-				float& h = heights[ static_cast< size_t >( iz * kGrid + ix ) ];
-				h        = std::max( h, static_cast< float >( top ) );
-			}
+			const double dx = -kGridHalfX + ( ix + 0.5 ) * cellX - p.x.x;
+			const double dz = -kGridHalfZ + ( iz + 0.5 ) * cellZ - p.x.z;
+			const double dy = -( n.x * dx + n.z * dz ) / sy;
+			if( dx * dx + dy * dy + dz * dz > p.radius * p.radius * 0.8 )
+				continue;
+			const double top = p.x.y + std::min( dy + p.half / ny, rise ) - kFloor;
+			float& h         = heights[ static_cast< size_t >( iz * kGrid + ix ) ];
+			h                = std::max( h, static_cast< float >( top ) );
 		}
+}
+
+void Shower::Rebuild()
+{
+	heights.assign( static_cast< size_t >( kGrid * kGrid ), 0.0f );
+	if( !settings.pile )
+		return;
+	std::vector< Piece* > lying;
+	for( Piece& p : pieces )
+		if( p.resting )
+			lying.push_back( &p );
+	std::sort( lying.begin(), lying.end(), []( const Piece* a, const Piece* b ) { return a->rested < b->rested; } );
+	for( Piece* p : lying )
+	{
+		//Down onto what is under it now: a piece that lay on one that has
+		//gone comes down, and one that did not stays where it is. Flat, it
+		//stands on the cell under its middle, as Settle put it; tilted, on
+		//the lower of its rims.
+		double gap = p->x.y - p->half - FloorAt( p->x.x, p->x.z );
+		V3 rims[ 2 ];
+		const V3 n = ToMatrix( p->q ) * V3 { 0, 0, 1 };
+		if( std::fabs( n.y ) <= kLayFlat )
+		{
+			gap = 1e9;
+			for( int i = 0, count = LowestRims( *p, rims ); i < count; ++i )
+				gap = std::min( gap, rims[ i ].y - FloorAt( rims[ i ].x, rims[ i ].z ) );
+		}
+		if( gap > 0.0 && gap < 1e8 )
+			p->x.y -= gap;
+		Stamp( *p );
+	}
 }
 
 void Shower::StepPiece( Piece& p )
@@ -318,8 +396,10 @@ void Shower::StepPiece( Piece& p )
 	p.x.y += deepest * 0.8;
 	p.w = p.w * ( 1.0 - kSpinDamp * dt );
 
-	//At rest, and flat: onto the pile.
-	if( Length( p.v ) * mpu < kSettleSpeed && Length( p.w ) < kSettleSpin && tilt > 0.96 )
+	//In contact and still: onto the pile, whatever its tilt. (0.1.0 also asked
+	//for it to be within 16 degrees of flat, and a piece that stopped leaning
+	//on a step never came to rest.)
+	if( Length( p.v ) * mpu < kSettleSpeed && Length( p.w ) < kSettleSpin )
 		p.still += dt;
 	else
 		p.still = 0.0;
@@ -352,25 +432,65 @@ void Shower::Advance( double dt, bool continuous )
 		carry -= kDt;
 	}
 
-	//Off the frame: gone. Too many lying about: the oldest fade.
-	int resting = 0;
-	for( const Piece& p : pieces )
-		resting += p.resting ? 1 : 0;
-	int excess = resting - kMaxResting;
+	//Ageing. Pieces are appended as they are thrown and removed in place, so
+	//the list runs oldest first. A piece goes at the end of its linger; the
+	//whole pile goes when Pile is turned off; a piece over the table's edge
+	//goes quickly (and is culled at a radius past it, below).
+	const bool ageing = !settings.noAgeing;
+	const bool edges  = !settings.noEdgeCull;
+	int quick         = 0;
 	for( Piece& p : pieces )
 	{
-		if( !p.resting )
-			continue;
-		if( excess > 0 || !settings.pile )
-		{
-			p.fade = std::min( p.fade, 1.0 ) - 2.0 * dt;
-			--excess;
-		}
+		p.age += dt;
+		if( p.resting && !settings.pile )
+			StartFade( p, kFadeTime );
+		if( ageing && p.age >= kLinger )
+			StartFade( p, kFadeTime );
+		if( edges && std::fabs( p.x.z ) > kTableHalfZ )
+			StartFade( p, kQuickFade );
+		quick += p.fadeRate >= 1.0 / kQuickFade ? 1 : 0;
 	}
+	//The cap: past 90% of the pool, the oldest that are not already going
+	//quickly go quickly, so there is always room for what is falling. It
+	//counts every piece, in the air or not: in 0.1.0 it counted only those
+	//at rest, and pieces that never came to rest filled the pool for good.
+	if( ageing )
+	{
+		int excess = static_cast< int >( pieces.size() ) - kCapPieces - quick;
+		for( size_t i = 0; i < pieces.size() && excess > 0; ++i )
+			if( pieces[ i ].fadeRate < 1.0 / kQuickFade )
+			{
+				StartFade( pieces[ i ], kQuickFade );
+				--excess;
+			}
+	}
+	for( Piece& p : pieces )
+		if( p.fadeRate > 0.0 )
+			p.fade = std::min( p.fade, 1.0 ) - p.fadeRate * dt;
+
+	//Gone: off the frame below or to the side, off the table front or back,
+	//or faded out. A piece leaving the pile takes its height with it.
 	const double edge = 0.5 * settings.aspect + 0.4;
-	pieces.erase( std::remove_if( pieces.begin(), pieces.end(),
-	                              [ & ]( const Piece& p ) { return p.x.y < -1.0 || std::fabs( p.x.x ) > edge || p.fade <= 0.0; } ),
-	              pieces.end() );
+	bool rebuild      = settings.pile != pileWas;
+	pileWas           = settings.pile;
+	size_t kept       = 0;
+	for( size_t i = 0; i < pieces.size(); ++i )
+	{
+		const Piece& p = pieces[ i ];
+		const bool off = p.x.y < -1.0 || std::fabs( p.x.x ) > edge || ( edges && std::fabs( p.x.z ) > kTableHalfZ + p.radius );
+		if( off || p.fade <= 0.0 )
+		{
+			++( off || ( edges && std::fabs( p.x.z ) > kTableHalfZ ) ? culled : faded );
+			rebuild = rebuild || p.resting;
+			continue;
+		}
+		if( kept != i )
+			pieces[ kept ] = p;
+		++kept;
+	}
+	pieces.resize( kept );
+	if( rebuild && !settings.noRebuild )
+		Rebuild();
 	(void)Smooth;
 }
 

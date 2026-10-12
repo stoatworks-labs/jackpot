@@ -685,6 +685,9 @@ struct Perturb
 	bool noDrag              = false;///< --shower: the piece falls without its drag
 	bool noGyro              = false;///< --shower: the tumble without its gyroscopic term
 	bool ballInertia         = false;///< --shower: a disc with a ball's moments of inertia
+	bool noAgeing            = false;///< --pile: nothing fades for its age or a full pool
+	bool noEdgeCull          = false;///< --pile: the table runs on for ever in z
+	bool noRebuild           = false;///< --pile: the height field only ever rises
 	bool identitySymmetry    = false;///< --craps: S = I
 	bool identityPermutation = false;///< --lottery: the balls painted as numbered
 	bool defaultsShifted     = false;///< --defaults: expect Roulette
@@ -1697,18 +1700,54 @@ int runShower( const Perturb& perturb )
 		sh.Start( 3.0 );
 		for( int f = 0; f < 60 * 9; ++f )
 			sh.Advance( kFrame, false );
-		int resting = 0, flat = 0;
+		//Every piece thrown is judged, not only those that came to rest (0.1.0
+		//judged 277 of 362): each is at rest in the pile, gone off the frame
+		//or the table, or still moving -- and one still moving must BE moving:
+		//a copy stepped on for half a second comes to rest, or travels or
+		//turns. (In 0.1.0 a piece stopped leaning on a step of the pile did
+		//neither, for ever.) Nothing has reached its linger yet (9 s of 12).
+		//At rest a piece lies flat to within a degree or -- stopped steeper
+		//than the settle's 16-degree gate -- as it lay.
+		int resting = 0, flat = 0, leaning = 0, moving = 0, between = 0, stuck = 0;
+		auto axisOf = []( const Piece& p ) { return ToMatrix( p.q ) * V3 { 0, 0, 1 }; };
+		std::vector< Piece > movers;
 		for( const Piece& p : sh.Pieces() )
-			if( p.resting )
+		{
+			if( !p.resting )
 			{
-				++resting;
-				const V3 axis = ToMatrix( p.q ) * V3 { 0, 0, 1 };
-				flat += std::fabs( axis.y ) >= std::cos( kPi / 180.0 ) ? 1 : 0;
+				++moving;
+				movers.push_back( p );
+				continue;
 			}
+			++resting;
+			const double up = std::fabs( axisOf( p ).y );
+			if( up >= std::cos( kPi / 180.0 ) )
+				++flat;
+			else if( up <= 0.96 )
+				++leaning;
+			else
+				++between;
+		}
+		const long accounted = static_cast< long >( sh.Pieces().size() ) + sh.culled + sh.faded;
 		Check( sh.energyRises == 0 && sh.contactSteps > 0 && sh.spawned > 0,
 		       fmt( "%ld pieces, %ld contact steps: no contact ever left a piece with more energy than it found (%ld did, worst +%.3g)", sh.spawned, sh.contactSteps, sh.energyRises, sh.worstRise ) );
-		Check( resting > 0 && flat == resting && sh.worstSnap <= 16.3,
-		       fmt( "%d pieces at rest in the pile, every one flat within 1 degree (%d); none was turned more than %.1f degrees to lie down (the settle's 16-degree gate)", resting, flat, sh.worstSnap ) );
+		for( Piece& q : movers )
+		{
+			const V3 x0 = q.x, a0 = axisOf( q );
+			double travelled = 0.0, turned = 0.0;
+			for( int i = 0; i < 600 && !q.resting; ++i )
+			{
+				sh.StepPiece( q );
+				travelled = std::max( travelled, Length( q.x - x0 ) );
+				turned    = std::max( turned, std::acos( std::clamp( Dot( axisOf( q ), a0 ), -1.0, 1.0 ) ) );
+			}
+			stuck += q.resting || travelled > 1e-3 || turned > kPi / 180.0 ? 0 : 1;
+		}
+		Check( resting > 0 && stuck == 0 && accounted == sh.spawned && sh.faded == 0,
+		       fmt( "all %ld pieces judged, 6 s after the shower: %d at rest in the pile, %ld gone off the frame or the table, %d still moving (%d of them stuck), %ld faded",
+		            sh.spawned, resting, sh.culled, moving, stuck, sh.faded ) );
+		Check( flat + leaning == resting && between == 0 && sh.worstSnap <= 16.3,
+		       fmt( "of the %d at rest, %d flat within 1 degree and %d laid as they lay, steeper than 16 degrees (%d between); none was turned more than %.1f degrees to lie down (the settle's 16-degree gate)", resting, flat, leaning, between, sh.worstSnap ) );
 	}
 	//Euler's disk: a coin rolling on its edge, leaning over. A disc rolling
 	//at lean alpha turns its contact round at Omega^2 = 4 g / ( r sin alpha ):
@@ -1782,6 +1821,132 @@ int runShower( const Perturb& perturb )
 		       fmt( "Euler's disk: %d windows from 10 to 1 degree of lean, the contact's rate within 15%% of Omega^2 = 4 g / ( r sin alpha ) in %d (worst %.0f%%), rising %.1fx as it flattened:%s",
 		            judged, within, 100.0 * worst, fastest / std::max( slowest, 1e-9 ), trace.c_str() ) );
 	}
+	return Verdict();
+}
+
+//===========================================================================
+// --pile: the shower clears, stays on the table, never stalls, and leaves the
+// table flat when it has gone (jackpot#3). Driven as the plugin's Tick drives
+// it: the settings every frame, a press of Shower Now a Start( 2.5 ), and
+// Advance( 1/60, Always ).
+//===========================================================================
+void pileSettings( Shower& sh, const Perturb& perturb, float amount )
+{
+	sh.settings.pattern    = Pattern::Rain;
+	sh.settings.pieces     = Pieces::Mixed;
+	sh.settings.rate       = AmountFromParam( amount );
+	sh.settings.size       = PieceSizeFromParam( ParamFromPieceSize( 0.06 ) );//the default Piece Size
+	sh.settings.aspect     = 16.0 / 9.0;
+	sh.settings.pile       = true;
+	sh.settings.noAgeing   = perturb.noAgeing;
+	sh.settings.noEdgeCull = perturb.noEdgeCull;
+	sh.settings.noRebuild  = perturb.noRebuild;
+}
+
+/// How far the table stands above its floor anywhere, pile included: 0 when
+/// the height field is flat. FloorAt sampled finer than the grid's cells and
+/// wider than the grid.
+double highestPile( const Shower& sh )
+{
+	double most = 0.0;
+	for( int i = 0; i <= 520; ++i )
+		for( int k = 0; k <= 280; ++k )
+			most = std::max( most, sh.FloorAt( -1.3 + 0.005 * i, -0.7 + 0.005 * k ) - Shower::kFloor );
+	return most;
+}
+
+/// The furthest any piece is past the table's front or back edge by its
+/// near rim (0 at the edge): above 0, a piece is off the table.
+double pastTheEdge( const Shower& sh )
+{
+	double worst = -1e9;
+	for( const Piece& p : sh.Pieces() )
+		worst = std::max( worst, std::fabs( p.x.z ) - p.radius - Shower::kTableHalfZ );
+	return worst;
+}
+
+int runPile( const Perturb& perturb )
+{
+	std::printf( "\n=== pile: the shower clears, stays on the table, never stalls, and leaves the table flat\n" );
+	double worstEdge = -1e9, worstZ = 0.0;
+	auto watch       = [ & ]( const Shower& sh ) {
+		worstEdge = std::max( worstEdge, pastTheEdge( sh ) );
+		for( const Piece& p : sh.Pieces() )
+			if( std::fabs( p.x.z ) > std::fabs( worstZ ) )
+				worstZ = p.x.z;
+	};
+	//A: three presses of Shower Now on Chips, Pieces to Coins, three more,
+	//then nothing, at the default Amount: 30 s after the last press the table
+	//is clear. The last press's pieces are thrown by 27.5 s and fade 12 s
+	//later (kLinger), in 0.5 s, so it is clear by 40 s; 15 s to spare.
+	{
+		Shower sh;
+		pileSettings( sh, perturb, 0.45f );
+		sh.seed = 0;
+		sh.Clear();
+		const double presses[] = { 3.0, 7.0, 11.0, 17.0, 21.0, 25.0 };
+		const double last      = 25.0;
+		const int frames       = static_cast< int >( std::lround( ( last + 30.0 ) * 60.0 ) );
+		long chipsThrown       = 0;
+		for( int f = 0; f < frames; ++f )
+		{
+			sh.settings.pieces = f < 14 * 60 ? Pieces::Chips : Pieces::Coins;
+			for( double press : presses )
+				if( f == static_cast< int >( std::lround( press * 60.0 ) ) )
+					sh.Start( 2.5 );
+			if( f == 14 * 60 )
+				chipsThrown = sh.spawned;
+			sh.Advance( kFrame, false );
+			watch( sh );
+		}
+		int chips = 0;
+		for( const Piece& p : sh.Pieces() )
+			chips += p.kind == PieceKind::Chip ? 1 : 0;
+		Check( sh.spawned > 0 && sh.Pieces().empty(),
+		       fmt( "chips, three presses of Shower Now, then coins, three more, then quiet: 30 s after the last, %zu of %ld pieces left (%d of the %ld chips); %ld faded, %ld off the table",
+		            sh.Pieces().size(), sh.spawned, chips, chipsThrown, sh.faded, sh.culled ) );
+		//D, once empty: nothing is left under the table either.
+		const double h = highestPile( sh );
+		Check( h == 0.0, fmt( "the pile gone, the table is flat again: FloorAt is the floor everywhere (at most %.4f above it)", h ) );
+	}
+	//C: Always at Amount 1.0 (400 a second, a 900-piece pool) for a minute:
+	//the last ten seconds still throw at least half of what was asked.
+	{
+		Shower sh;
+		pileSettings( sh, perturb, 1.0f );
+		sh.seed = 3;
+		sh.Clear();
+		const int seconds = 60;
+		long before = 0;
+		for( int f = 0; f < seconds * 60; ++f )
+		{
+			if( f == ( seconds - 10 ) * 60 )
+				before = sh.spawned;
+			sh.Advance( kFrame, true );
+			watch( sh );
+		}
+		const long thrown   = sh.spawned - before;
+		const double wanted = sh.settings.rate * 10.0;
+		Check( thrown >= 0.5 * wanted,
+		       fmt( "Always at Amount 1.0 for %d s: %ld thrown in the last 10 s of %.0f asked (%.0f%%; at least 50%%), %zu pieces in the pool of %d",
+		            seconds, thrown, wanted, 100.0 * thrown / wanted, sh.Pieces().size(), Shower::kMaxPieces ) );
+		//D, after Pile off and on again mid-shower: what was lying there has
+		//gone, and so has its height.
+		sh.settings.pile = false;
+		for( int f = 0; f < 60; ++f )
+		{
+			sh.Advance( kFrame, true );
+			watch( sh );
+		}
+		sh.settings.pile = true;
+		sh.Advance( kFrame, true );
+		watch( sh );
+		const double h = highestPile( sh );
+		Check( h == 0.0, fmt( "Pile off for a second and on again: FloorAt is the floor everywhere (at most %.4f above it)", h ) );
+	}
+	//B, over every frame of both.
+	Check( worstEdge <= 0.0,
+	       fmt( "no piece ever further than its radius past the table's edge (z beyond +/-%.2f): the furthest %.3f past, the furthest z %.2f", Shower::kTableHalfZ, std::max( worstEdge, 0.0 ), worstZ ) );
 	return Verdict();
 }
 
@@ -1965,7 +2130,7 @@ int runDefaults( const Perturb& perturb )
 
 int runNames( const Perturb& )
 {
-	std::printf( "\n=== names: what a host and an OSC address see\n" );
+	std::printf( "\n=== names: what a host and an OSC address see, and the groups a host draws\n" );
 	for( bool effect : { false, true } )
 	{
 		JackpotPlugin plugin( effect );
@@ -1991,6 +2156,29 @@ int runNames( const Perturb& )
 		Check( clashes == 0 && slashes == 0 && emptyElements == 0 && symbols == ( effect ? 3 : 2 ),
 		       fmt( "%s: %u parameters, unique as Arena addresses them (%d clash), no '/' (%d), no empty option (%d), Symbols has %d (Clip on the effect only)", effect ? "Over" : "source",
 		            plugin.ParamCount(), clashes, slashes, emptyElements, symbols ) );
+		//The groups, as Resolume draws them: one per run of consecutive ids
+		//that share a name, so a name in two runs is two groups. Game and Play
+		//are in none, so Play is at the top with every group closed (jackpot#2).
+		std::set< std::string > ended;
+		std::string runs, previous;
+		int split = 0;
+		for( unsigned int i = 0; i < plugin.ParamCount(); ++i )
+		{
+			const std::string group = plugin.GetParamGroup( i );
+			if( group != previous && !previous.empty() )
+				ended.insert( previous );
+			if( !group.empty() && group != previous )
+			{
+				split += ended.count( group ) > 0 ? 1 : 0;
+				runs += ( runs.empty() ? "" : ", " ) + group;
+			}
+			previous = group;
+		}
+		const bool topLevel = plugin.GetParamGroup( PT_GAME ).empty() && plugin.GetParamGroup( PT_PLAY ).empty() && plugin.GetParamGroup( PT_SPIN_TIME ) == "Game"
+		                      && plugin.GetParamGroup( PT_INTERVAL ) == "Game";
+		Check( topLevel && split == 0,
+		       fmt( "%s: Game and Play in no group, at the top (%s), Spin Time to Interval the Game group; every group one run of ids (%d split): %s", effect ? "Over" : "source",
+		            topLevel ? "yes" : "NO", split, runs.c_str() ) );
 	}
 	return Verdict();
 }
@@ -2346,7 +2534,8 @@ const std::vector< CheckEntry >& checks()
 		{ "slots", runSlots },       { "nearmiss", runNearMiss },       { "blur", runBlur },
 		{ "slots-readback", runSlotsReadback }, { "roulette", runRoulette }, { "roulette-readback", runRouletteReadback },
 		{ "wheel", runWheel },       { "wheel-readback", runWheelReadback }, { "craps", runCraps },
-		{ "lottery", runLottery },   { "shower", runShower },           { "duration", runDuration },
+		{ "lottery", runLottery },   { "shower", runShower },           { "pile", runPile },
+		{ "duration", runDuration },
 		{ "defaults", runDefaults }, { "names", runNames },             { "determinism", runDeterminism },
 		{ "over-check", runOver },   { "resize", runResize },           { "fonts", runFonts },
 		{ "state", runState },
@@ -2358,7 +2547,7 @@ const std::vector< CheckEntry >& checks()
 /// are -- `--offline` (what CI runs) is everything else's complement.
 bool isOffline( const std::string& flag )
 {
-	static const char* const offline[] = { "slots", "nearmiss", "roulette", "wheel", "craps", "lottery", "shower", "duration", "defaults", "names", "determinism" };
+	static const char* const offline[] = { "slots", "nearmiss", "roulette", "wheel", "craps", "lottery", "shower", "pile", "duration", "defaults", "names", "determinism" };
 	for( const char* name : offline )
 		if( flag == name )
 			return true;
@@ -2399,6 +2588,9 @@ int runNegative( bool offlineOnly = false )
 	add( "shower", runShower, "no drag: the fall is ballistic, not the closed form", []( Perturb& p ) { p.noDrag = true; } );
 	add( "shower", runShower, "no gyroscopic term: a tumbling chip's angular momentum is not kept", []( Perturb& p ) { p.noGyro = true; } );
 	add( "shower", runShower, "a ball's moments of inertia: the coin does not roll like Euler's disk", []( Perturb& p ) { p.ballInertia = true; } );
+	add( "pile", runPile, "no ageing: nothing fades for its age or a full pool, so the pile never clears and the pool fills", []( Perturb& p ) { p.noAgeing = true; } );
+	add( "pile", runPile, "no edge in z: a piece rolls off the back of the table and on for ever", []( Perturb& p ) { p.noEdgeCull = true; } );
+	add( "pile", runPile, "no rebuild: the height field only rises, and a gone pile is still there to land on", []( Perturb& p ) { p.noRebuild = true; } );
 	add( "defaults", runDefaults, "expect the default game to be roulette", []( Perturb& p ) { p.defaultsShifted = true; } );
 	add( "determinism", runDeterminism, "expect seeds 3 and 4 to agree", []( Perturb& p ) { p.determinismSeeds = true; } );
 
@@ -2467,7 +2659,7 @@ int main( int argc, char** argv )
 			             "  --script PATH     cues for --pipe/--film: 'frame Name value'\n\n"
 			             "  --shaders --out DIR   every program as compiled, written out and through the driver\n\n"
 			             "  checks: --slots --nearmiss --blur --slots-readback --roulette --roulette-readback\n"
-			             "          --wheel --wheel-readback --craps --lottery --shower --duration --defaults\n"
+			             "          --wheel --wheel-readback --craps --lottery --shower --pile --duration --defaults\n"
 			             "          --names --determinism --over-check --resize --fonts --state --negative --bench\n"
 			             "  --offline         the checks and negative controls that need no GL context\n" );
 			return 0;

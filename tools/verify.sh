@@ -161,7 +161,7 @@ step "Checks"
 #---------------------------------------------------------------------------
 # Every claim the README makes, in the order the README makes them.
 for check in slots nearmiss blur slots-readback roulette roulette-readback wheel wheel-readback craps lottery \
-             shower duration defaults names determinism over-check resize fonts state; do
+             shower pile duration defaults names determinism over-check resize fonts state; do
 	"$BUILD/jptest" --$check || fail "jptest --$check"
 done
 
