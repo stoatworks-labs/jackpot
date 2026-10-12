@@ -1,34 +1,25 @@
 # jackpot
 
 > **AI-assisted project.** This codebase was created with [Claude](https://claude.com/claude-code)
-> (Anthropic), directed and reviewed by a human author. It has been loaded into
-> **Resolume Arena 7.27.1 on macOS** and played there, and passed the fleet's Arena gate on
-> Windows (see [Status](#status)); everything
-> else below is measured by an offline harness that drives the real plugin classes in
-> a headless GL context. `jptest --roulette` spins for
-> every number of both wheels, and at rest the ball lies in the pocket painted
-> with the number asked for, read from the ball and the ring **as drawn**; turning
-> the rotor by any whole number of pockets leaves the ball's path **bit-identical**,
-> and the ball leaves the track within 0.5% of v² = g r tan α.
-> `--roulette-readback`, `--wheel-readback` and `--slots-readback` then read the
-> result **out of the rendered pixels**. `--duration` brings every game to rest at
-> exactly Spin Time, still moving a frame before. `jptest --negative` re-runs the
-> checks against 24 deliberately wrong models and `tools/mutate.sh` changes one
-> character of the shipped shaders and C++ twelve times; every one is caught. A
-> control sweep fails if any parameter does nothing.
+> (Anthropic), directed and reviewed by a human author. It's been loaded into
+> **Resolume Arena 7.27.1 on macOS** and played there, and it passes the fleet's Arena checks on
+> Windows. Everything else is measured by an offline harness that drives the real plugin code
+> without a host. The full rundown, and the list of things I haven't tried yet, is under
+> [Status](#status).
 
-The casino floor for Resolume Arena/Avenue, as two FFGL plugins: **SW Jackpot**, a
-source, and **SW Jackpot Over**, the same over your clip. A one-armed bandit, a
-roulette wheel, the money wheel, a craps table and the lottery drum — and chips and
-coins showering on a win. Press **Play**; the game plays out with real physics and
-comes to rest on a random result — or the one you set — at exactly **Spin Time**,
-or on the next beat or bar.
+A thoroughly rigged casino for Resolume Arena and Avenue, as two FFGL plugins: **SW Jackpot**,
+a source, and **SW Jackpot Over**, which does the same over your clip. There's a one-armed
+bandit, a roulette wheel, the money wheel, a craps table and the lottery drum, and chips and
+coins raining down whenever somebody wins. Press **Play** and the game plays out with proper
+physics, then comes to rest on a random result, or the one you picked, at exactly **Spin Time**
+or on the next beat or bar. Handy for when the client wants the big reveal on the downbeat and
+the prize to go to table six.
 
 ![A red fruit machine showing three sevens under a JACKPOT! banner, credits counting up, chips and gold coins falling past it](docs/hero.png)
 
 <sub>Three sevens on the line: the banner, the meters counting the 200 credits in,
 and the shower a jackpot sets off. Rendered by the plugin's offline harness
-(`jptest`), not captured from Resolume.</sub>
+(`jptest`) rather than captured from Resolume.</sub>
 
 <!-- downloads:start -->
 
@@ -64,19 +55,19 @@ macOS builds are signed and notarised and open normally. The Windows builds are 
 
 [![Jackpot — the casino floor for Resolume](docs/video-thumb.png)](https://www.youtube.com/watch?v=-s5chJo2Idc)
 
-*[Watch it](https://www.youtube.com/watch?v=-s5chJo2Idc) — 68 seconds: the slot machine's jackpot with the
-shower; a near miss; five reels of sevens and bars; roulette landing on 17; the money wheel on
-the joker; craps on 11 at the come-out; the lottery drum drawing six; a fountain of chips and
-coins; and the Over effect on one of Resolume's demo clips, with the clip on the reels. Every
-frame is the real plugins' output: an FFGL plugin has no window, so the footage is rendered by
-this repository's own offline harness (`jptest --film` and `--over --pipe`), not captured from
-Resolume.*
+*[Watch it](https://www.youtube.com/watch?v=-s5chJo2Idc) (68 seconds): the slot machine's
+jackpot and the shower, a near miss, five reels of sevens and bars, roulette landing on 17, the
+money wheel on the joker, craps on 11 at the come-out, the lottery drum drawing six, a fountain
+of chips and coins, and the Over effect on one of Resolume's demo clips with the clip on the
+reels. It's all the plugins' own output. An FFGL plugin doesn't have a window to film, so the
+footage comes from this repo's offline harness (`jptest --film` and `--over --pipe`) rather
+than a screen recording of Resolume.*
 
 ## The one idea
 
-**Every casino game is decided before it is shown, and every one has a symmetry
-the physics cannot see.** So each game is simulated honestly, ahead of time, and
-then the paint is turned so the result is the one asked for:
+**Every casino game is decided before you see it, and every one has a symmetry
+the physics can't see.** So each game is simulated honestly, ahead of time, and
+then the paint gets turned so the result is whatever you asked for:
 
 | game | what decides it | what the physics cannot see |
 | --- | --- | --- |
@@ -86,25 +77,26 @@ then the paint is turned so the result is the one asked for:
 | Craps | two dice off the pyramids | each die's rotation group (polyhedral's engine): draw it as R(t)·S |
 | Lottery | the air in the drum | identical balls: deal the numbers out to them |
 
-The motion you see is exactly what the physics produced; only which number is
-painted where has moved. The turn is never seen happening: on roulette the
-croupier's hand spins the rotor up before the ball is released and takes the ring
-there on the way; on the money wheel it is the pull before it is let go; in the
-lottery the drum is empty between draws and the new balls drop in already painted.
-Random results come from an integer generator weighted as the real game is, Fixed
-ones from you, and both go through the same mechanism.
+The motion you see is exactly what the physics did. Only the numbers have moved,
+and you never see them move: on roulette the croupier's hand spins the rotor up
+before the ball goes in and takes the ring round on the way, on the money wheel it
+happens in the pull before it's let go, and in the lottery the drum is empty
+between draws, so the new balls drop in already painted. Random results come from
+an integer generator weighted the way the real game is, Fixed ones come from you,
+and both go through the same trick.
 
-What falls out of it:
+What you get for free:
 
 - **Near misses, honestly.** A Random pull on the *Virtual* strip draws each reel's
   stop on 64 virtual stops over 22 physical ones, the blanks beside the seven worth
   six each and the seven one. The seven sails past just above or below the line
-  twelve times for every time it lands, against twice on a fair strip — because
-  that is how the machines are built. *Near Miss* asks for one outright.
+  twelve times for every time it lands, against twice on a fair strip, because
+  that's how the real machines are built (the swines). *Near Miss* asks for one
+  outright.
 - **Motion blur from the shutter**, not a filter: each reel's strip is integrated
   over the frame's exposure, so at speed the symbols smear into streaks and
   sharpen as the reel brakes into its detent, which bounces as a damped spring.
-- **The roulette ball leaves the track when it must**: held against the lip only
+- **The roulette ball leaves the track when it has to**: held against the lip only
   while v² ≥ g r tan 14°, then down the stator, off a diamond if it meets one,
   across the frets of the counter-turning rotor, and into a pocket.
 - **The money wheel's slowdown is the clapper**: every peg bends the leather and
@@ -118,7 +110,7 @@ What falls out of it:
   mouth goes up it and rolls along the rack.
 - **Chips and coins as rigid discs**: tumbling in the air, bouncing, rolling on
   edge and, as they lean over, whirring faster and faster like Euler's disk
-  before they slap flat into the pile — which clears itself, each piece fading
+  before they slap flat into the pile, which tidies itself up, each piece fading
   12 s after it was thrown.
 
 ![Six frames: the slot machine on a win, the roulette wheel at rest on 17 black, the money wheel on $20, a craps table on 11, the lottery drum with six balls on the rack, a fountain of chips and coins](docs/set.png)
@@ -128,7 +120,7 @@ What falls out of it:
 
 ## Results
 
-Result reads against **the player's bet**, which is Fixed Number:
+Result is read against **the player's bet**, which is whatever Fixed Number is set to:
 
 | | Slots | Roulette | Money wheel | Craps | Lottery |
 | --- | --- | --- | --- | --- | --- |
@@ -173,7 +165,7 @@ composition restores both.
 
 ## Status
 
-**v0.1.1, 2026-10-12, and honestly early** (v0.1.0 on 2026-10-09). User guide:
+**v0.1.1, 2026-10-12, and still early days** (v0.1.0 came out on 2026-10-09). User guide:
 [stoatworks-labs.com/software/jackpot/guide](https://stoatworks-labs.com/software/jackpot/guide/).
 
 **New in v0.1.1:** the shower's pile clears itself (jackpot#3: every piece
@@ -182,7 +174,7 @@ off the table front or back are gone, and the height field drains with the pile)
 Game and Play sit at the top of the panel, outside the Game group (jackpot#2). Both
 are measured by the harness below (`--pile`, `--names`). The pile's clearing was also run
 in Resolume Arena 7.27.1 on Windows (software rendering, a build of the 0.1.1 code made with MSVC on the lab machine, 2026-10-12);
-Play's place has not been looked at in Resolume.
+I haven't looked at where Play sits in Resolume yet.
 
 **In Resolume Arena 7.27.1 on macOS** (this Mac, Apple M4 Max, 2026-10-09): Arena's log
 registers `'SW Jackpot' uid: JP01 category: 3` and `'SW Jackpot Over' uid: JP02
@@ -191,8 +183,8 @@ showed the slot machine at 1920×1080 with every control group; Result *Jackpot*
 Play landed three sevens at Spin Time with the banner, the meters counting 200 in and
 the shower raining; switched to Roulette, the ball ran the track and came to rest on
 7 RED, the bet's number, under the result board. The plugin's own log recorded both
-plays as asked and no warning or error. The Over effect, the other three games, Land
-On against Arena's transport and a saved composition were not tried there. `oxbow
+plays as asked and no warning or error. I didn't try the Over effect, the other three
+games, Land On against Arena's transport or a saved composition there. `oxbow
 probe` reads the bundles as a host does and `oxbow selftest` renders through each. No
 OpenFX port, no browser demo.
 
@@ -209,7 +201,7 @@ none read dead, and Font File alone was inconclusive. The 16 that act only on a 
 Speed, Clapper, the lottery's Balls, Draw and Air, Display, Auto Play and Interval)
 were not measured there. Software rendering says nothing about a GPU or about speed.
 
-What is measured, on this machine:
+What's measured, on this Mac:
 
 | | |
 | --- | --- |
@@ -241,24 +233,27 @@ edge do. A play is planned on a worker, so it starts a frame or two after the
 press: craps **1 ms**, roulette **13**, the lottery **47** (49 balls), the money
 wheel **55** (worst 82).
 
-What is **not** verified, and is the honest limit of this release:
+What **isn't** verified yet:
 
-- **Two plays in one Arena on a Mac, and a gate on Windows that never presses Play.**
-  No play has run on Windows. Nothing here has met Arena's transport (whether
-  `barPhase` is a usable downbeat is unmeasured fleet-wide; Land On trusts it), its
-  parameter restore order across a saved composition, or any GPU but this one.
-- **The physics is mine, and checked, not fitted.** The roulette ball is a point
+- **Two plays in Arena on a Mac, and a Windows check that never presses Play.**
+  No game has been played on Windows yet. Nothing here has met Arena's transport
+  (whether `barPhase` is a usable downbeat hasn't been measured anywhere in the
+  fleet, and Land On trusts it), the order Arena restores parameters in from a saved
+  composition, or any GPU but mine.
+- **The physics is my own, checked but not fitted.** The roulette ball is a point
   carrying its radius on a profile of cones, with one friction for each surface;
   the clapper is a spring that straightens at a third of its stiffness; the
   lottery's air is a jet, a trace of swirl and some turbulence; the chips are
   single-point contacts. Each is checked against the law it should obey (the
-  departure, the energy, Euler's disk), not against filmed casino equipment. The
-  constants were chosen to look right.
+  departure, the energy, Euler's disk), not against footage of real casino kit. The
+  constants were picked because they looked right, which is the scientific method
+  as practised in Resolume.
 - **Roulette's frets are flush with the pockets' rims** and stop at the steps'
-  feet. Standing proud of the apron, a fret's end once held the ball for ever.
+  feet. When they stood proud of the apron, the end of a fret once caught the ball
+  and held onto it forever, which isn't how roulette is meant to go.
 - **Craps throws are a stickman's ordinary ones** (1.9–2.5 m/s) and settle in under
   a second. A longer Spin Time is met by the shooter's hold after the sweep and at
-  most a 0.6× slow motion — never by throwing harder.
+  most a 0.6× slow motion, never by throwing harder.
 - **Short Spin Times are played fast.** The lottery takes 2 s just to load 49 balls,
   so a 3 s draw plays at about 3×; a 3 s money-wheel spin at up to 1.6×.
 - **The slot machine and the money wheel are drawn face on in 2D**; roulette,
