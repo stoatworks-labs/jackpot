@@ -12,7 +12,7 @@ or on the next beat or bar.
 *Three sevens on the line, the banner, the meters counting the win in, and the shower a jackpot
 sets off. Rendered by the plugin's offline harness, not captured from Resolume.*
 
-> **Before you rely on this:** released at **v0.1.0**, and honestly early. It has been loaded
+> **Before you rely on this:** released at **v0.1.1**, and honestly early. It has been loaded
 > into Resolume Arena 7.27.1 on a Mac and played there — a slot jackpot and a roulette spin, each
 > landing as asked, with the shower. On Windows, both plugins load, register and render in
 > Resolume Arena 7.27.1, with every control as declared, on a machine with software rendering
@@ -22,10 +22,12 @@ sets off. Rendered by the plugin's offline harness, not captured from Resolume.*
 > harness then reads the result **out of the rendered picture** for the slot machine, the
 > roulette wheel and the money wheel. Every game stops at exactly Spin Time. Twenty-four
 > deliberately wrong models are all detected, twelve one-character changes to the shipped code are
-> all caught, and all 46 controls across the two plugins measurably do something. Two changes
-> since v0.1.0 — the shower's pile now clears itself, and **Play** sits at the top of the panel —
-> are measured by the harness only and have **not yet been run in Resolume**. Try it on a spare
-> layer before you put it in a show.
+> all caught, and all 46 controls across the two plugins measurably do something. v0.1.1's
+> shower fix was run in Resolume Arena 7.27.1 on Windows (software rendering, a build of the 0.1.1
+> code made with MSVC on the lab machine, 2026-10-12): with Shower
+> Only on Always, chips showered, then coins, the chips were gone about 14 s after the switch, the
+> shower kept falling, and the floor was clear 15 s after Shower Off. **Play**'s place at the top of
+> the panel is measured by the harness only. Try it on a spare layer before you put it in a show.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human author.
 
@@ -407,9 +409,9 @@ fail it, and a sweep fails if any control does nothing.
 - **Two plays in one Resolume, on one Mac, and none on Windows.** The Over effect, the money wheel,
   craps and the lottery, Land On against Resolume's tempo, and a saved composition's restore have
   not been tried in a host, nor any play on Windows or on a GPU there.
-- **The pile's clearing and Play's place at the top of the panel are new since v0.1.0** and have
-  been measured only by the harness, not yet seen in Resolume. That Resolume draws Game and Play
-  outside the groups follows from how it groups parameters; it has not been looked at.
+- **Play's place at the top of the panel (v0.1.1)** is measured only by the harness. That Resolume
+  draws Game and Play outside the groups follows from how it groups parameters; it has not been
+  looked at. The pile's clearing was run in Resolume Arena 7.27.1 on Windows (software rendering, a build of the 0.1.1 code made with MSVC on the lab machine, 2026-10-12), with Shower Only, not after a game.
 - **The physics is its own**, checked against the laws it should obey, not against film of real
   casino equipment. Every friction, bounce and stiffness is chosen to look right.
 - **The roulette frets are flush with the pockets' rims**, and the ball is a point carrying its

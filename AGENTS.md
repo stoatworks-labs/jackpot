@@ -408,6 +408,8 @@ Assumed or chosen, not measured:
 
 In Resolume only on this Mac, two plays (README "Status"); no OpenFX port, browser
 demo or presets. The 0.1.1 fixes (the pile, jackpot#3; Play at the top, jackpot#2)
-have been measured by the harness only, never run in Resolume: on Windows, watch a
-pile clear about 15 s after its shower began, and Play outside the closed Game group. The workflows exist and have never run (there is no GitHub repo); turn
+are measured by the harness. The pile was also run in Resolume Arena 7.27.1 on Windows (software rendering, a build of the 0.1.1 code made with MSVC on the lab machine, 2026-10-12):
+Shower Only on Always, chips then coins, the chips gone about 14 s after the switch, the floor
+clear 15 s after Shower Off, the shower still falling. Play outside the closed Game group has not
+been looked at (a firewall prompt sat over the panel). The workflows exist and have never run (there is no GitHub repo); turn
 them on only if the repo is public.

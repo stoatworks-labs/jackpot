@@ -173,15 +173,16 @@ composition restores both.
 
 ## Status
 
-**v0.1.0, 2026-10-09, and honestly early.** User guide:
+**v0.1.1, 2026-10-12, and honestly early** (v0.1.0 on 2026-10-09). User guide:
 [stoatworks-labs.com/software/jackpot/guide](https://stoatworks-labs.com/software/jackpot/guide/).
 
-**Since v0.1.0, unreleased:** the shower's pile clears itself (jackpot#3: every piece
+**New in v0.1.1:** the shower's pile clears itself (jackpot#3: every piece
 fades 12 s after it is thrown, the oldest go early when the pool is nearly full, pieces
 off the table front or back are gone, and the height field drains with the pile) and
 Game and Play sit at the top of the panel, outside the Game group (jackpot#2). Both
-are measured by the harness below (`--pile`, `--names`) and have **not** been run in
-Resolume.
+are measured by the harness below (`--pile`, `--names`). The pile's clearing was also run
+in Resolume Arena 7.27.1 on Windows (software rendering, a build of the 0.1.1 code made with MSVC on the lab machine, 2026-10-12);
+Play's place has not been looked at in Resolume.
 
 **In Resolume Arena 7.27.1 on macOS** (this Mac, Apple M4 Max, 2026-10-09): Arena's log
 registers `'SW Jackpot' uid: JP01 category: 3` and `'SW Jackpot Over' uid: JP02

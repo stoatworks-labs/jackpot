@@ -1,6 +1,6 @@
 {
   "name": "jackpot",
-  "version-string": "0.1.0",
+  "version-string": "0.1.1",
   "description": "Dependencies for building the jackpot FFGL plugins. GLEW is only needed on Windows; macOS uses the system OpenGL framework.",
   "dependencies": [
     {

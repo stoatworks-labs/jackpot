@@ -101,8 +101,8 @@ shader's mirrored constants, or the harness's readbacks.
 
 ## Not done yet
 - In Resolume: two plays on this Mac, and the Windows gate (17/17, no play pressed),
-  both 2026-10-09; no OpenFX port, no browser demo, no presets. The 0.1.1 fixes
-  (jackpot#2, #3) have not been run in Resolume.
+  both 2026-10-09; no OpenFX port, no browser demo, no presets. The 0.1.1 pile fix
+  (jackpot#3) was run in Arena on Windows, 2026-10-12 (Shower Only); Play's place (jackpot#2) has not been looked at.
 
 ## Diagnostics
 
