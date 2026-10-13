@@ -78,7 +78,7 @@ PY
 		caught=$(( caught + 1 ))
 	else
 		printf '   ok    %s fails against the mutant:\n' "$check"
-		grep -E '^  FAIL' "$WORK/log" | head -3 | cut -c1-150 | sed 's/^/        /'
+		{ grep -E '^  FAIL' "$WORK/log" || true; } | head -3 | cut -c1-150 | sed 's/^/        /'
 		caught=$(( caught + 1 ))
 	fi
 	cp "$WORK/original" "$tree/$file"
