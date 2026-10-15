@@ -78,6 +78,10 @@ add_library(jackpot_core OBJECT
     source/Roulette.cpp
     source/MoneyWheel.h
     source/MoneyWheel.cpp
+    source/WheelFace.h
+    source/WheelFace.cpp
+    source/FileBytes.h
+    source/FileBytes.cpp
     source/Craps.h
     source/Craps.cpp
     source/Lottery.h
@@ -169,6 +173,8 @@ if(JACKPOT_BUILD_TOOLS AND APPLE)
         "-framework OpenGL"
         "-framework AppKit"
     )
+    # The wheel files under tools/fixtures/ (jackpot#1), read by the checks.
+    target_compile_definitions(jptest PRIVATE JACKPOT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
 
 # ---------------------------------------------------------------------------

@@ -39,6 +39,9 @@ SIZE = "320x180"
 
 FONT_FILE = "/System/Library/Fonts/Supplemental/Georgia.ttf"
 
+# Wheel files (jackpot#1), from the repo's fixtures.
+FIXTURES = REPO / "tools" / "fixtures"
+
 ROULETTE = ["--set", "Game=Roulette"]
 WHEEL = ["--set", "Game=Money Wheel"]
 CRAPS = ["--set", "Game=Craps"]
@@ -63,6 +66,12 @@ CONTEXT = {
     "Light Angle": ROULETTE,
     "Tilt": ROULETTE,
     "Clapper": WHEEL + ["--frames", "150"],
+    "Segments": WHEEL,
+    "Wheel File": WHEEL,
+    # Lines matters only with more values than segments; Short File only with
+    # fewer.
+    "Lines": WHEEL + ["--set", f"Wheel File={FIXTURES / 'eighty.txt'}", "--set", "Segments=12"],
+    "Short File": WHEEL + ["--set", f"Wheel File={FIXTURES / 'three.txt'}", "--set", "Segments=12"],
     "Pyramids": CRAPS,
     "Puck": CRAPS,
     "Balls": LOTTERY + ["--frames", "200"],
@@ -101,6 +110,9 @@ DISCRETE = {
     "Deflectors": [0, 1],
     "Pyramids": [0, 1],
     "Puck": [0, 1],
+    "Segments": [2, 13, 54],
+    "Lines": [0, 1],
+    "Short File": [0, 1],
     "Balls": [10, 30, 75],
     "Draw": [1, 3, 7],
     "Shower": [0, 1, 2, 3],
@@ -117,6 +129,7 @@ DISCRETE = {
 TEXTS = {
     "Font File": ["", FONT_FILE],
     "Font Name": ["", "Georgia"],
+    "Wheel File": ["", str(FIXTURES / "prizes.txt")],
 }
 
 SKIP_KINDS = {"buffer"}

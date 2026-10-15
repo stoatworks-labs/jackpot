@@ -13,8 +13,20 @@
 namespace jackpot
 {
 /**
-    Parameter ids. **Append only**: FFGL's ABI is by index, and other hosts than
-    Arena may store compositions that way.
+    Parameter ids, in the order a host lists them.
+
+    **Insert inside a group, never between groups.** Resolume makes a group of
+    each run of consecutive ids that share a group name, so a control added to
+    a group must sit in that group's run, and every id after it moves up. That
+    is safe in Arena: a saved composition stores name/value pairs (and only for
+    values that are not the default), never indices -- proved in vectrix
+    (docs/NOTES.md: a composition saved, PT_PRESET moved, every value reloaded
+    onto the right control), and radar inserted its Sprite controls the same
+    way. jackpot#1's four Money Wheel controls (Segments, Wheel File, Lines,
+    Short File) went in after Clapper on that footing, moving Pyramids onwards
+    up four (Mix: 50 -> 54). What must never change is a NAME, or an option's
+    element order (stored as numbers). A host that stores compositions by index
+    would see the move; none in the fleet's targets does.
 
     The Over group sits AFTER the About block, on purpose: the source declares
     ids 0 .. PT_SOURCE_COUNT-1 and the effect all of them, so both share every id
@@ -47,6 +59,10 @@ enum ParamId : unsigned int
 
 	// -- Money Wheel ---------------------------------------------------------
 	PT_CLAPPER,
+	PT_SEGMENTS,  ///< 2..54 (jackpot#1)
+	PT_WHEEL_FILE,///< a .txt, one value per line
+	PT_LINES,     ///< which lines, when there are more than segments
+	PT_SHORT_FILE,///< what fewer lines than segments do
 
 	// -- Craps ---------------------------------------------------------------
 	PT_PYRAMIDS,

@@ -34,6 +34,8 @@
 #include "Slots.h"
 #include "SymbolArt.h"
 #include "Typeface.h"
+#include "FileBytes.h"
+#include "WheelFace.h"
 
 #include <OpenGL/OpenGL.h>
 #include <OpenGL/gl3.h>
@@ -50,6 +52,7 @@
 #include <cstring>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <set>
 #include <sstream>
@@ -692,6 +695,15 @@ struct Perturb
 	bool identityPermutation = false;///< --lottery: the balls painted as numbered
 	bool defaultsShifted     = false;///< --defaults: expect Roulette
 	bool determinismSeeds    = false;///< --determinism: expect seeds 3 and 4 to agree
+	bool widenBytes          = false;///< --wheel-file: the path widened byte by byte (a narrow fopen)
+	bool keepBomAndCr        = false;///< --wheel-file: the BOM and CR kept as text, LF the only line end
+	bool noMarkers           = false;///< --wheel-file: a leading * or % is just a character
+	bool sattolo             = false;///< --wheel-draw: the shuffle's j drawn below i, not i + 1
+	bool drawPerSpin         = false;///< --wheel-draw: the Random lines drawn again every play
+	bool markedWinAny        = false;///< --wheel-custom: every segment of a file wins
+	bool onePegPerSegment    = false;///< --wheel-custom: P = N pegs, not about 54
+	bool noLabelShrink       = false;///< --wheel-geometry: every label at its largest
+	bool segmentsOffByOne    = false;///< --wheel-geometry: the shader told one segment more
 };
 
 using CheckFn = int ( * )( const Perturb& );
@@ -755,6 +767,108 @@ double shaderConstant( const char* program, const std::string& marker )
 		}
 	return std::nan( "" );
 }
+
+//---------------------------------------------------------------------------
+// Wheel files (jackpot#1).
+//---------------------------------------------------------------------------
+std::string fixturePath( const std::string& name )
+{
+	return std::string( JACKPOT_SOURCE_DIR ) + "/tools/fixtures/" + name;
+}
+
+/// A directory of this run's own, for the files the checks write; emptied
+/// and removed at exit.
+std::vector< std::string >& scratchFiles()
+{
+	static std::vector< std::string > files;
+	return files;
+}
+
+const std::string& scratchDir()
+{
+	static std::string dir;
+	if( dir.empty() )
+	{
+		const char* tmp     = std::getenv( "TMPDIR" );
+		std::string pattern = std::string( tmp != nullptr && tmp[ 0 ] != '\0' ? tmp : "/tmp" ) + "/jptest-wheel-XXXXXX";
+		std::vector< char > buffer( pattern.begin(), pattern.end() );
+		buffer.push_back( '\0' );
+		dir = mkdtemp( buffer.data() ) != nullptr ? std::string( buffer.data() ) : std::string( "/tmp" );
+		std::atexit( [] {
+			for( const std::string& f : scratchFiles() )
+				std::remove( f.c_str() );
+			rmdir( scratchDir().c_str() );
+		} );
+	}
+	return dir;
+}
+
+std::string writeScratch( const std::string& name, const std::string& bytes )
+{
+	const std::string path = scratchDir() + "/" + name;
+	std::ofstream out( path, std::ios::binary | std::ios::trunc );
+	out.write( bytes.data(), static_cast< std::streamsize >( bytes.size() ) );
+	if( std::find( scratchFiles().begin(), scratchFiles().end(), path ) == scratchFiles().end() )
+		scratchFiles().push_back( path );
+	return path;
+}
+
+std::string readBytes( const std::string& path )
+{
+	std::ifstream in( path, std::ios::binary );
+	return std::string( std::istreambuf_iterator< char >( in ), std::istreambuf_iterator< char >() );
+}
+
+/// A file's values, one "line mark label" each (mark '*', '%' or ' '; a reel
+/// symbol as #n), for comparing with what a reader should have made of it.
+std::string describeEntries( const wheel::FileContents& c )
+{
+	std::string s;
+	for( const wheel::Entry& e : c.entries )
+		s += std::to_string( e.line ) + ( e.mark == wheel::Mark::Jackpot ? "*" : e.mark == wheel::Mark::Joker ? "%" : " " )
+		     + ( e.symbol != 0 ? "#" + std::to_string( e.symbol ) : e.label ) + "|";
+	return s;
+}
+
+wheel::FileContents parseBytes( const std::string& bytes, const wheel::ReadTestFlags& flags, bool& ok, std::string& why )
+{
+	wheel::FileContents c;
+	ok = wheel::ReadWheelText( reinterpret_cast< const unsigned char* >( bytes.data() ), bytes.size(), c, why, flags );
+	return c;
+}
+
+/// `count` values "P1".."Pn" (or with a suffix), the first one marked '*'.
+std::string numberedValues( int count, const std::string& suffix = "" )
+{
+	std::string s;
+	for( int i = 1; i <= count; ++i )
+		s += ( i == 1 ? "*P" : "P" ) + std::to_string( i ) + suffix + "\n";
+	return s;
+}
+
+wheel::FileContents contentsOf( const std::string& bytes )
+{
+	bool ok = false;
+	std::string why;
+	return parseBytes( bytes, {}, ok, why );
+}
+
+std::vector< std::string > faceLabels( const wheel::Face& f )
+{
+	std::vector< std::string > out;
+	for( const wheel::Segment& s : f.segment )
+		out.push_back( std::to_string( s.line ) + ":" + s.label );
+	return out;
+}
+
+std::vector< int > faceLines( const wheel::Face& f )
+{
+	std::vector< int > out;
+	for( const wheel::Segment& s : f.segment )
+		out.push_back( s.line );
+	return out;
+}
+
 
 //===========================================================================
 // --slots: the stops drawn are on the payline at rest; Result is honoured;
@@ -1339,9 +1453,9 @@ int runRoulette( const Perturb& perturb )
 //===========================================================================
 int segmentUnderClapper( const wheel::Plan& p, double t )
 {
-	const double seg = 2.0 * kPi / wheel::kSegments;
+	const double seg = 2.0 * kPi / p.segments;
 	const long j     = static_cast< long >( std::floor( wrapAngle( 0.5 * kPi - p.PaintAngle( t ) ) / seg ) );
-	return static_cast< int >( ( ( j % wheel::kSegments ) + wheel::kSegments ) % wheel::kSegments );
+	return static_cast< int >( ( ( j % p.segments ) + p.segments ) % p.segments );
 }
 
 int runWheel( const Perturb& perturb )
@@ -1389,7 +1503,7 @@ int runWheel( const Perturb& perturb )
 			const bool same = s.phase.size() == base.phase.size() && std::memcmp( s.phase.data(), base.phase.data(), s.phase.size() * sizeof( double ) ) == 0
 			                  && std::memcmp( s.clapper.data(), base.clapper.data(), s.clapper.size() * sizeof( double ) ) == 0;
 			identical += same ? 1 : 0;
-			right += s.segment == static_cast< int >( ( ( base.segment - k ) % 54 + 54 ) % 54 ) ? 1 : 0;
+			right += s.gap == static_cast< int >( ( ( base.gap - k ) % 54 + 54 ) % 54 ) ? 1 : 0;
 		}
 		Check( identical == 4 && right == 4 && base.settled && base.phase.size() > 100,
 		       fmt( "C54: the wheel turned 1, 7, 27 and 53 whole segments, the pegs' phase and the clapper bit-identical (%d of 4), the segment under it moved by k (%d of 4)", identical, right ) );
@@ -2007,7 +2121,7 @@ GameState stateAt( Game game, const Play& play, double t )
 	return s;
 }
 
-Play makePlay( Game game, double duration, uint32_t seed, bool noWarp )
+Play makePlay( Game game, double duration, uint32_t seed, bool noWarp, std::shared_ptr< const wheel::Face > face = nullptr )
 {
 	Play p;
 	p.game = game;
@@ -2032,6 +2146,7 @@ Play makePlay( Game game, double duration, uint32_t seed, bool noWarp )
 		wheel::Request r;
 		r.seed = seed, r.duration = duration, r.noWarp = noWarp;
 		r.stiffness = ClapperFromParam( 0.23f );
+		r.face      = face;
 		p.wheel     = wheel::MakePlan( r );
 		break;
 	}
@@ -2086,6 +2201,37 @@ int runDuration( const Perturb& perturb )
 		            wrongEnd, notMoving, notStill, warpLo, warpHi, worstEase ) );
 		std::printf( "        warps (simulated seconds per second played):%s\n", warps.c_str() );
 	}
+	//The money wheel of N segments (jackpot#1): P = N round( 54 / N ) pegs,
+	//37 to 72, each meeting Spin Time as the 54 does.
+	for( int n : { 2, 8, 24, 36, 37 } )
+	{
+		auto face = std::make_shared< const wheel::Face >( wheel::BigSix( n ) );
+		int wrongEnd = 0, notMoving = 0, notStill = 0, plays = 0;
+		double warpLo = 1e9, warpHi = 0.0, worstEase = 1.0;
+		std::string warps;
+		for( double D : { 3.0, 6.0, 12.0 } )
+			for( uint32_t seed = 1; seed <= 3; ++seed )
+			{
+				const Play p = makePlay( Game::MoneyWheel, D, seed, perturb.noWarp, face );
+				++plays;
+				const Playback& clock = p.Clock();
+				wrongEnd += std::fabs( clock.duration - D ) > 1e-9 ? 1 : 0;
+				const GameState atEnd = stateAt( Game::MoneyWheel, p, D ), before = stateAt( Game::MoneyWheel, p, D - kFrame ), later = stateAt( Game::MoneyWheel, p, D + 0.75 );
+				notMoving += atEnd.Distance( before ) > 1e-9 ? 0 : 1;
+				notStill += atEnd.Distance( later ) < 1e-9 ? 0 : 1;
+				warps += fmt( " %.0fs:%.2f", D, clock.warp );
+				warpLo = std::min( warpLo, clock.warp );
+				warpHi = std::max( warpHi, clock.warp );
+				if( clock.rateStart > 0.0 )
+					worstEase = std::min( worstEase, clock.rateEnd / clock.rateStart );
+			}
+		const int m = wheel::PegsPerSegment( n );
+		Check( wrongEnd == 0 && notMoving == 0 && notStill == 0 && worstEase >= 0.65 - 1e-12,
+		       fmt( "money wheel of %d segments (%d pegs): %d plays of 3, 6 and 12 s: ends at Spin Time (%d not), moving a frame before (%d not), still after (%d not); warp %.2f..%.2f, "
+		            "the ease never below %.2f",
+		            n, n * m, plays, wrongEnd, notMoving, notStill, warpLo, warpHi, worstEase ) );
+		std::printf( "        warps (simulated seconds per second played):%s\n", warps.c_str() );
+	}
 	//Land On Beat and Bar: the wait ends on the boundary, at least Spin Time away.
 	{
 		int off = 0, n = 0;
@@ -2122,8 +2268,12 @@ int runDefaults( const Perturb& perturb )
 		                && OptionIndex( plugin.GetFloatParameter( PT_RESULT ), 6 ) == static_cast< int >( Result::Random )
 		                && OptionIndex( plugin.GetFloatParameter( PT_REELS ), 2 ) == 0 && OptionIndex( plugin.GetFloatParameter( PT_SHOWER ), 4 ) == static_cast< int >( ShowerWhen::OnWin )
 		                && OptionIndex( plugin.GetFloatParameter( PT_BACKDROP ), 3 ) == static_cast< int >( Backdrop::Dark )
-		                && std::fabs( ZoomFromParam( plugin.GetFloatParameter( PT_ZOOM ) ) - 1.0 ) < 0.01 && ( !effect || plugin.GetFloatParameter( PT_MIX ) == 1.0f );
-		Check( ok, fmt( "%s: Slots, 4 s, Random, 3 reels, shower On Win, Dark, Zoom 1%s", effect ? "Over" : "source", effect ? ", Mix 1" : "" ) );
+		                && std::fabs( ZoomFromParam( plugin.GetFloatParameter( PT_ZOOM ) ) - 1.0 ) < 0.01 && ( !effect || plugin.GetFloatParameter( PT_MIX ) == 1.0f )
+		                && plugin.GetFloatParameter( PT_SEGMENTS ) == 54.0f && std::string( plugin.GetTextParameter( PT_WHEEL_FILE ) ).empty()
+		                && OptionIndex( plugin.GetFloatParameter( PT_LINES ), 2 ) == static_cast< int >( wheel::Lines::Random )
+		                && OptionIndex( plugin.GetFloatParameter( PT_SHORT_FILE ), 2 ) == static_cast< int >( wheel::ShortFile::Repeat );
+		Check( ok, fmt( "%s: Slots, 4 s, Random, 3 reels, shower On Win, Dark, Zoom 1; the money wheel 54 segments, no file, Lines Random, Short File Repeat%s", effect ? "Over" : "source",
+		                effect ? ", Mix 1" : "" ) );
 	}
 	return Verdict();
 }
@@ -2200,6 +2350,18 @@ int runDeterminism( const Perturb& perturb )
 			differ = differ || !( stateAt( games[ g ], a, t ) == stateAt( games[ g ], c, t ) );
 		}
 		Check( same && differ, fmt( "%s: seed 3 twice is one play (%s); seed 4 is another (%s)", names[ g ], same ? "yes" : "NO", differ ? "yes" : "NO" ) );
+	}
+	{
+		auto face = std::make_shared< const wheel::Face >( wheel::FromFile( contentsOf( numberedValues( 30 ) ), 24, wheel::Lines::Random, wheel::ShortFile::Repeat, 7 ) );
+		const Play a = makePlay( Game::MoneyWheel, 5.0, 3, false, face ), b = makePlay( Game::MoneyWheel, 5.0, 3, false, face );
+		const Play c = makePlay( Game::MoneyWheel, 5.0, perturb.determinismSeeds ? 3 : 4, false, face );
+		bool same = a.Result().text == b.Result().text && a.Clock().natural == b.Clock().natural, differ = false;
+		for( double t = 0.0; t <= 5.0; t += 0.25 )
+		{
+			same   = same && stateAt( Game::MoneyWheel, a, t ) == stateAt( Game::MoneyWheel, b, t );
+			differ = differ || !( stateAt( Game::MoneyWheel, a, t ) == stateAt( Game::MoneyWheel, c, t ) );
+		}
+		Check( same && differ, fmt( "money wheel of 24 from a file: seed 3 twice is one play (%s); seed 4 is another (%s)", same ? "yes" : "NO", differ ? "yes" : "NO" ) );
 	}
 	return Verdict();
 }
@@ -2292,6 +2454,720 @@ int runWheelReadback( const Perturb& perturb )
 			wrong += value != bet ? 1 : 0;
 		}
 		Check( wrong == 0, fmt( "%dx%d: %d results read under the clapper, %d wrong", rig.width, rig.height, read, wrong ) );
+	}
+	//jackpot#1: wheels from a file, 2 to 54 segments, Fixed Number a line.
+	const std::string path = writeScratch( "readback.txt", "*ONE\nTWO\n%THREE\nFOUR\n$5\nSIX\n*SEVEN\nEIGHT\nNINE\n%TEN\n11\nTWELVE\n" );
+	for( const auto& size : { std::pair< int, int > { 640, 360 }, std::pair< int, int > { 320, 180 } } )
+	{
+		Rig rig;
+		if( !rig.Init( size.first, size.second ) )
+			return 1;
+		rig.plugin.Flags().noShift = perturb.noShift;
+		setGame( rig, Game::MoneyWheel );
+		rig.Set( PT_RESULT, static_cast< float >( Result::Fixed ) );
+		rig.Set( PT_SPIN_TIME, ParamFromSpinTime( 5.0 ) );
+		rig.Set( PT_LINES, static_cast< float >( wheel::Lines::InOrder ) );
+		rig.plugin.SetTextParameter( PT_WHEEL_FILE, path.c_str() );
+		int read = 0, wrong = 0;
+		std::string seen;
+		for( int n : { 2, 8, 24, 54 } )
+		{
+			rig.Set( PT_SEGMENTS, static_cast< float >( n ) );
+			for( int line : { 1, 2, n >= 8 ? 7 : 1 } )
+			{
+				rig.Set( PT_FIXED_NUMBER, static_cast< float >( line ) );
+				rig.plugin.SetFlatForTest( 0 );
+				if( !rig.PlayToRest( 30 ) )
+					return 1;
+				rig.plugin.SetFlatForTest( 2 );
+				rig.Render( 1 );
+				const Floats img  = rig.Output();
+				const double zoom = ZoomFromParam( rig.plugin.GetFloatParameter( PT_ZOOM ) );
+				const double cy   = -0.035 + 0.46 * 0.78;
+				const int x = rig.width / 2, y = static_cast< int >( std::floor( cy * rig.height * zoom + 0.5 * rig.height ) );
+				const int j = static_cast< int >( std::lround( img[ ( static_cast< size_t >( y ) * rig.width + x ) * 4 ] * 64.0f ) );
+				const wheel::Plan& p    = rig.plugin.CurrentPlay().wheel;
+				const wheel::Face& face = p.WheelFace();
+				++read;
+				const bool ok = face.Count() == n && j >= 0 && j < n && face.segment[ static_cast< size_t >( j ) ].line == line && j == p.Shown();
+				wrong += ok ? 0 : 1;
+				seen += fmt( " %d:%d", n, line );
+			}
+		}
+		Check( wrong == 0, fmt( "%dx%d, wheels from a file: %d Fixed lines read under the clapper (segments:line%s), %d wrong", rig.width, rig.height, read, seen.c_str(), wrong ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// jackpot#1: the Wheel File, Segments, Lines and Short File.
+//===========================================================================
+//---------------------------------------------------------------------------
+// --wheel-file: what a file becomes.
+//---------------------------------------------------------------------------
+int runWheelFile( const Perturb& perturb )
+{
+	std::printf( "\n=== wheel file: what a file becomes, by path and by encoding, and what falls back (jackpot#1)\n" );
+	wheel::ReadTestFlags rf;
+	rf.keepBomAndCr = perturb.keepBomAndCr;
+	rf.noMarkers    = perturb.noMarkers;
+
+	struct Case
+	{
+		const char* what;
+		std::string bytes;
+		std::string want;
+		std::string encoding;
+	};
+	std::string be = "\xFE\xFF";
+	for( char16_t u : std::u16string( u"*Café\n%x\n" ) )
+	{
+		be.push_back( static_cast< char >( u >> 8 ) );
+		be.push_back( static_cast< char >( u & 0xFF ) );
+	}
+	const std::string ansiWant = "1 CAFE|2 CREME BRULEE|3 QUOTED - DASH|4*OLFASS|";
+	const std::vector< Case > cases = {
+		{ "LF, markers, a blank line", "$5\n*JACKPOT\n%JOKER\n\nfree beer\n", "1 $5|2*JACKPOT|3%JOKER|5 FREE BEER|", "UTF-8" },
+		{ "bom-crlf.txt (a BOM, CRLF, blank lines)", readBytes( fixturePath( "bom-crlf.txt" ) ), "1*JACKPOT|2 $5|4 FREE BEER|6%JOKER|", "UTF-8 with a BOM" },
+		{ "CR alone ends a line", "*A\r\rb\r", "1*A|3 B|", "UTF-8" },
+		{ "cp1252.txt (not UTF-8)", readBytes( fixturePath( "cp1252.txt" ) ), ansiWant, "Windows-1252 (it is not UTF-8)" },
+		{ "utf16.txt (UTF-16 LE, a BOM)", readBytes( fixturePath( "utf16.txt" ) ), ansiWant, "UTF-16 LE" },
+		{ "UTF-16 BE, a BOM", be, "1*CAFE|2%X|", "UTF-16 BE" },
+		{ "emoji.txt", readBytes( fixturePath( "emoji.txt" ) ), "1 #1|2 #2|3 #3|4*#10|5 #5|6 #6|7%#11|8 CHERRY PIE|9 |10 $5|11 #2|12 BAR|", "UTF-8" },
+		{ "outside the type", "50% OFF & MORE?\n£5\n‘Hi’ – there…\n**DOUBLE\n  A \t  B  \nWürst ŁÓDŹ Œuvre ß\n🍒🍒\n7\xE2\x83\xA3\n",
+		  "1 50 OFF MORE|2 5|3 'HI' - THERE...|4*DOUBLE|5 A B|6 WURST LODZ OEUVRE SS|7 |8 #10|", "UTF-8" },
+	};
+	int wrong = 0;
+	for( const Case& c : cases )
+	{
+		bool ok = false;
+		std::string why;
+		const wheel::FileContents got = parseBytes( c.bytes, rf, ok, why );
+		const std::string seen        = describeEntries( got );
+		if( !ok || seen != c.want || got.encoding != c.encoding )
+		{
+			++wrong;
+			std::printf( "        %s:\n          want %s (%s)\n          got  %s (%s)%s\n", c.what, c.want.c_str(), c.encoding.c_str(), seen.c_str(), got.encoding.c_str(),
+			             ok ? "" : ( " refused: " + why ).c_str() );
+		}
+	}
+	//By path, from the fixture with a non-ASCII name.
+	{
+		wheel::FileContents got;
+		std::string why;
+		const bool ok = wheel::LoadWheelFile( fixturePath( "glücksrad.txt" ), got, why );
+		const std::string want = "1*HAUPTGEWINN|2 NIETE|3%FREILOS|4 5|5 UBERRASCHUNG|";
+		if( !ok || describeEntries( got ) != want )
+		{
+			++wrong;
+			std::printf( "        glücksrad.txt: got %s %s\n", describeEntries( got ).c_str(), why.c_str() );
+		}
+	}
+	Check( wrong == 0, fmt( "%zu texts as expected: markers stripped, blank lines skipped but counted, LF/CRLF/CR, a BOM, UTF-16 LE and BE, Windows-1252, the seven emoji alone, "
+	                        "lowercase and accents folded, the rest dropped (%d wrong)",
+	                        cases.size() + 1, wrong ) );
+
+	//What is refused, and says why.
+	{
+		struct Refusal
+		{
+			const char* what;
+			std::string path;
+			const char* says;
+		};
+		std::string big( wheel::kMaxFileBytes + 4096, 'A' );
+		for( size_t i = 80; i < big.size(); i += 81 )
+			big[ i ] = '\n';
+		std::string control( 300, '\x01' );
+		control += "A\n";
+		const std::vector< Refusal > refusals = {
+			{ "broken.txt (a PNG)", fixturePath( "broken.txt" ), "not a text file" },
+			{ "control characters", writeScratch( "control.txt", control ), "control characters" },
+			{ "an empty file", writeScratch( "empty.txt", "" ), "is empty" },
+			{ "only blank lines", writeScratch( "blank.txt", "\n  \n\t\r\n" ), "no values" },
+			{ "past 1 MB", writeScratch( "big.txt", big ), "larger than 1 MB" },
+			{ "no such file", scratchDir() + "/no such wheel.txt", "cannot be opened" },
+		};
+		int missed = 0;
+		std::string said;
+		for( const Refusal& r : refusals )
+		{
+			wheel::FileContents got;
+			std::string why;
+			const bool ok = wheel::LoadWheelFile( r.path, got, why );
+			if( ok || why.find( r.says ) == std::string::npos )
+			{
+				++missed;
+				std::printf( "        %s: %s '%s'\n", r.what, ok ? "accepted" : "refused, but saying", why.c_str() );
+			}
+			said += std::string( said.empty() ? "" : "; " ) + why;
+		}
+		Check( missed == 0, fmt( "%zu files refused with the reason (%d not): %s", refusals.size(), missed, said.c_str() ) );
+	}
+	//The caps.
+	{
+		std::string many;
+		for( int i = 1; i <= 1500; ++i )
+			many += "V" + std::to_string( i ) + "\n";
+		bool ok = false;
+		std::string why;
+		const wheel::FileContents got = parseBytes( many, rf, ok, why );
+		const bool capped             = ok && got.entries.size() == static_cast< size_t >( wheel::kMaxValues ) && got.entries.back().line == wheel::kMaxValues && !got.notes.empty()
+		                    && got.notes[ 0 ].find( "500 values" ) != std::string::npos;
+		Check( capped, fmt( "1,500 lines: the first %zu values kept, the last of them line %d, and a note for the log ('%s')", got.entries.size(),
+		                    got.entries.empty() ? 0 : got.entries.back().line, got.notes.empty() ? "" : got.notes[ 0 ].c_str() ) );
+	}
+	//A path that is not ASCII: through the file system here, and through the
+	//UTF-16 conversion Windows opens it with.
+	{
+		const std::string name = "Glücksrad – колесо 🍒.txt";
+		const std::string path = writeScratch( name, "*A\nb\n" );
+		wheel::FileContents got;
+		std::string why;
+		const bool read = wheel::LoadWheelFile( path, got, why ) && describeEntries( got ) == "1*A|2 B|";
+
+		const std::string windows  = "C:\\Shows\\Glücksrad – колесо 🍒.txt";
+		const std::u16string want = u"C:\\Shows\\Glücksrad – колесо 🍒.txt";
+		std::u16string wide;
+		const bool converted = perturb.widenBytes ? ( wide = files::WidenBytesForTest( windows ), true ) : files::Utf8ToUtf16( windows, wide );
+		int refused = 0;
+		const char* const bad[] = { "\xC0\xAF", "\xED\xA0\x80", "\xE2\x82", "\xF4\x90\x80\x80", "\x80" };
+		for( const char* b : bad )
+		{
+			std::u16string out;
+			refused += perturb.widenBytes ? 0 : ( files::Utf8ToUtf16( b, out ) ? 0 : 1 );
+		}
+		Check( read && converted && wide == want && refused == 5,
+		       fmt( "a non-ASCII path: '%s' read here (%s); as UTF-16, %zu code units %s the compiler's own u\"\" literal (%zu); overlong, surrogate, truncated, past U+10FFFF and stray bytes "
+		            "refused (%d of 5)",
+		            name.c_str(), read ? "yes" : "NO", wide.size(), wide == want ? "match" : "DO NOT match", want.size(), refused ) );
+	}
+	//The plugin: the default the SDK pushes, a file, a missing one, a broken
+	//one, none -- each falls back to the Big Six and says why.
+	{
+		JackpotPlugin plugin( false );
+		plugin.SetSynchronousForTest( true );
+		plugin.SetFloatParameter( PT_GAME, static_cast< float >( Game::MoneyWheel ) );
+		const bool pushed = plugin.SetTextParameter( PT_WHEEL_FILE, "" ) == FF_SUCCESS && std::string( plugin.GetTextParameter( PT_WHEEL_FILE ) ).empty();
+		plugin.TickForTest( kFrame );
+		const bool bigSix = plugin.WheelFaceForTest() == wheel::DefaultFace() && !plugin.WheelFileLoaded();
+		const std::string prizes = fixturePath( "prizes.txt" );
+		plugin.SetTextParameter( PT_WHEEL_FILE, prizes.c_str() );
+		plugin.TickForTest( kFrame );
+		const auto face   = plugin.WheelFaceForTest();
+		const bool loaded = plugin.WheelFileLoaded() && face->fromFile && face->Count() == wheel::kSegments && std::string( plugin.GetTextParameter( PT_WHEEL_FILE ) ) == prizes;
+		auto fallsBack    = [ & ]( const std::string& path, const char* says ) {
+			plugin.SetTextParameter( PT_WHEEL_FILE, path.c_str() );
+			plugin.TickForTest( kFrame );
+			return plugin.WheelFaceForTest() == wheel::DefaultFace() && plugin.WheelFileStatus().find( says ) != std::string::npos;
+		};
+		const bool missing = fallsBack( scratchDir() + "/gone.txt", "cannot be opened" );
+		const bool broken  = fallsBack( fixturePath( "broken.txt" ), "not a text file" );
+		plugin.SetTextParameter( PT_WHEEL_FILE, "" );
+		plugin.TickForTest( kFrame );
+		const bool cleared = plugin.WheelFaceForTest() == wheel::DefaultFace() && plugin.WheelFileStatus().empty();
+		Check( pushed && bigSix && loaded && missing && broken && cleared,
+		       fmt( "the plugin: the empty default accepted (%s) and the Big Six (%s); prizes.txt read on the next frame, 54 segments (%s); a missing file (%s) and a broken one (%s) "
+		            "fall back to the Big Six and say why; cleared, the Big Six (%s)",
+		            pushed ? "yes" : "NO", bigSix ? "yes" : "NO", loaded ? "yes" : "NO", missing ? "yes" : "NO", broken ? "yes" : "NO", cleared ? "yes" : "NO" ) );
+	}
+	return Verdict();
+}
+
+//---------------------------------------------------------------------------
+// --wheel-draw: which lines, where, and when they change.
+//---------------------------------------------------------------------------
+int runWheelDraw( const Perturb& perturb )
+{
+	std::printf( "\n=== wheel draw: In Order and Random, Short File, the cut, and a draw that stays put from spin to spin\n" );
+	wheel::FaceTestFlags ff;
+	ff.sattolo = perturb.sattolo;
+	const wheel::FileContents eighty = contentsOf( numberedValues( 80 ) );
+
+	//In Order: clockwise from segment 0, so they come past the clapper in order.
+	{
+		const int n = 24;
+		const wheel::Face f = wheel::FromFile( eighty, n, wheel::Lines::InOrder, wheel::ShortFile::Repeat, 0, ff );
+		int misplaced = 0;
+		for( int k = 0; k < n; ++k )
+			misplaced += f.segment[ static_cast< size_t >( ( n - k ) % n ) ].line != k + 1 ? 1 : 0;
+		//The wheel turned anticlockwise through a turn: the line under the
+		//clapper (the top) each time it changes.
+		const double seg = 2.0 * kPi / n;
+		int last = -1, steps = 0, outOfOrder = 0;
+		for( int i = 0; i <= 4 * n; ++i )
+		{
+			const double a = ( i + 0.5 ) * seg / 4.0;
+			const int j    = static_cast< int >( std::floor( wrapAngle( 0.5 * kPi - a ) / seg ) ) % n;
+			const int line = f.segment[ static_cast< size_t >( j ) ].line;
+			if( last >= 0 && line != last )
+			{
+				++steps;
+				outOfOrder += line != last % n + 1 ? 1 : 0;
+			}
+			last = line;
+		}
+		Check( misplaced == 0 && steps == n && outOfOrder == 0 && f.Count() == n,
+		       fmt( "In Order, 80 values on 24 segments: lines 1-24 clockwise from segment 0 (%d misplaced); turned anticlockwise, the clapper meets them 1, 2, 3 ... (%d of %d steps "
+		            "out of order)",
+		            misplaced, outOfOrder, steps ) );
+	}
+	//Random: N distinct values, the same for a seed, another for another seed,
+	//and a larger Segments adds to the draw rather than redrawing it.
+	{
+		auto lineSet = []( const wheel::Face& f ) {
+			std::set< int > s;
+			for( const wheel::Segment& x : f.segment )
+				s.insert( x.line );
+			return s;
+		};
+		const wheel::Face a  = wheel::FromFile( eighty, 24, wheel::Lines::Random, wheel::ShortFile::Repeat, 5, ff );
+		const wheel::Face a2 = wheel::FromFile( eighty, 24, wheel::Lines::Random, wheel::ShortFile::Repeat, 5, ff );
+		const wheel::Face b  = wheel::FromFile( eighty, 24, wheel::Lines::Random, wheel::ShortFile::Repeat, 6, ff );
+		const wheel::Face c  = wheel::FromFile( eighty, 25, wheel::Lines::Random, wheel::ShortFile::Repeat, 5, ff );
+		const std::set< int > sa = lineSet( a ), sb = lineSet( b ), sc = lineSet( c );
+		const bool prefix        = std::includes( sc.begin(), sc.end(), sa.begin(), sa.end() );
+		Check( sa.size() == 24 && a == a2 && sa != sb && prefix && sc.size() == 25,
+		       fmt( "Random, 80 values on 24: %zu different lines; Seed 5 twice the same wheel (%s); Seed 6 another (%s); 25 segments keep the 24 and add one (%s)", sa.size(),
+		            a == a2 ? "yes" : "NO", sa != sb ? "yes" : "NO", prefix ? "yes" : "NO" ) );
+	}
+	//Fair: over every Seed, each of 30 values is drawn onto a 10-segment wheel
+	//a third of the time, and each is as likely on segment 0.
+	{
+		const wheel::FileContents thirty = contentsOf( numberedValues( 30 ) );
+		std::vector< long > drawn( 30, 0 ), first( 30, 0 );
+		const int seeds = 10000;
+		for( int seed = 0; seed < seeds; ++seed )
+		{
+			const wheel::Face f = wheel::FromFile( thirty, 10, wheel::Lines::Random, wheel::ShortFile::Repeat, static_cast< uint32_t >( seed ), ff );
+			for( const wheel::Segment& s : f.segment )
+				++drawn[ static_cast< size_t >( s.line - 1 ) ];
+			++first[ static_cast< size_t >( f.segment[ 0 ].line - 1 ) ];
+		}
+		const double chiDrawn = chiSquare( drawn, std::vector< double >( 30, seeds * 10.0 / 30.0 ) );
+		const double chiFirst = chiSquare( first, std::vector< double >( 30, seeds / 30.0 ) );
+		Check( chiDrawn < chiSquareCritical( 29 ) && chiFirst < chiSquareCritical( 29 ),
+		       fmt( "Random over Seed 0-9999, 30 values on 10: chi-square %.1f over which are drawn, %.1f over which lands on segment 0 (critical %.1f)", chiDrawn, chiFirst,
+		            chiSquareCritical( 29 ) ) );
+	}
+	//Short File, and the cut.
+	{
+		const wheel::FileContents three = contentsOf( "*WIN\nLOSE\n%MAYBE\n" ), one = contentsOf( "ONLY\n" );
+		const wheel::Face repeat = wheel::FromFile( three, 12, wheel::Lines::InOrder, wheel::ShortFile::Repeat, 0, ff );
+		const wheel::Face fewer  = wheel::FromFile( three, 12, wheel::Lines::InOrder, wheel::ShortFile::Fewer, 0, ff );
+		const wheel::Face single = wheel::FromFile( one, 12, wheel::Lines::InOrder, wheel::ShortFile::Fewer, 0, ff );
+		const wheel::Face shuffled = wheel::FromFile( three, 12, wheel::Lines::Random, wheel::ShortFile::Repeat, 3, ff );
+		const wheel::Face enough   = wheel::FromFile( eighty, 24, wheel::Lines::InOrder, wheel::ShortFile::Fewer, 0, ff );
+		int cycled = 0;
+		for( int k = 0; k < 12; ++k )
+			cycled += repeat.segment[ static_cast< size_t >( ( 12 - k ) % 12 ) ].line == k % 3 + 1 ? 1 : 0;
+		std::map< int, int > times;
+		for( const wheel::Segment& s : shuffled.segment )
+			++times[ s.line ];
+		const bool even = times.size() == 3 && times[ 1 ] == 4 && times[ 2 ] == 4 && times[ 3 ] == 4;
+		Check( repeat.Count() == 12 && cycled == 12 && fewer.Count() == 3 && faceLines( fewer ) == std::vector< int > { 1, 3, 2 } && single.Count() == 2
+		           && single.segment[ 0 ].line == 1 && single.segment[ 1 ].line == 1 && shuffled.Count() == 12 && even && enough.Count() == 24,
+		       fmt( "Short File, 3 values on 12: Repeat, 12 segments cycling 1 2 3 (%d of 12); Fewer Segments, %d; one value, %d (at least 2); Random and Repeat, each value 4 times "
+		            "(%s); 80 values, Fewer changes nothing (%d)",
+		            cycled, fewer.Count(), single.Count(), even ? "yes" : "NO", enough.Count() ) );
+
+		const std::string longLine = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCD";
+		const wheel::FileContents longOne = contentsOf( longLine + "\n" );
+		std::string cuts;
+		bool allCut = true;
+		for( int n : { 2, 3, 8, 12, 24, 54 } )
+		{
+			const wheel::Face f = wheel::FromFile( longOne, n, wheel::Lines::InOrder, wheel::ShortFile::Repeat, 0, ff );
+			const size_t got    = f.segment[ 0 ].label.size();
+			allCut              = allCut && got == static_cast< size_t >( wheel::MaxLabelChars( n ) ) && f.segment[ 0 ].board.size() == static_cast< size_t >( wheel::kMaxLabel );
+			cuts += fmt( " %d:%zu", n, got );
+		}
+		Check( allCut, fmt( "a 40-character line cut for the segments (segments:characters)%s; the result board keeps %d", cuts.c_str(), wheel::kMaxLabel ) );
+	}
+	//Through the plugin: the draw holds from spin to spin, changes with Seed
+	//(and back), keeps its places when the lines' text is edited, and the
+	//file re-read when it is chosen again.
+	{
+		JackpotPlugin plugin( false );
+		plugin.SetSynchronousForTest( true );
+		plugin.Flags().drawPerSpin = perturb.drawPerSpin;
+		const std::string path     = writeScratch( "draw.txt", numberedValues( 80 ) );
+		plugin.SetFloatParameter( PT_GAME, static_cast< float >( Game::MoneyWheel ) );
+		plugin.SetFloatParameter( PT_SEGMENTS, 24.0f );
+		plugin.SetFloatParameter( PT_SEED, 5.0f );
+		plugin.SetFloatParameter( PT_SPIN_TIME, ParamFromSpinTime( 2.0 ) );
+		plugin.SetTextParameter( PT_WHEEL_FILE, path.c_str() );
+		plugin.TickForTest( kFrame );
+		plugin.TickForTest( kFrame );
+		const std::vector< std::string > first = faceLabels( *plugin.WheelFaceForTest() );
+		int plays = 0, moved = 0;
+		for( int i = 0; i < 6; ++i )
+		{
+			const int rests = plugin.RestsSeen();
+			plugin.SetFloatParameter( PT_PLAY, 1.0f );
+			plugin.SetFloatParameter( PT_PLAY, 0.0f );
+			for( int f = 0; f < 1200 && plugin.RestsSeen() == rests; ++f )
+				plugin.TickForTest( kFrame );
+			plugin.TickForTest( kFrame );
+			++plays;
+			moved += faceLabels( plugin.CurrentPlay().wheel.WheelFace() ) != first || faceLabels( *plugin.WheelFaceForTest() ) != first ? 1 : 0;
+		}
+		plugin.SetFloatParameter( PT_SEED, 6.0f );
+		plugin.TickForTest( kFrame );
+		const std::vector< std::string > seed6 = faceLabels( *plugin.WheelFaceForTest() );
+		const bool redrawn                     = seed6 != first && faceLabels( plugin.CurrentPlay().wheel.WheelFace() ) == seed6;
+		plugin.SetFloatParameter( PT_SEED, 5.0f );
+		plugin.TickForTest( kFrame );
+		const bool back = faceLabels( *plugin.WheelFaceForTest() ) == first;
+		//Every line's text edited, the same number of lines: the same places.
+		writeScratch( "draw.txt", numberedValues( 80, "X" ) );
+		const auto before = plugin.WheelFaceForTest();
+		plugin.SetTextParameter( PT_WHEEL_FILE, path.c_str() );
+		plugin.TickForTest( kFrame );
+		const auto edited = plugin.WheelFaceForTest();
+		const bool reread = faceLabels( *edited ) != first && faceLines( *edited ) == faceLines( *before );
+		plugin.SetTextParameter( PT_WHEEL_FILE, path.c_str() );
+		plugin.TickForTest( kFrame );
+		const bool kept = plugin.WheelFaceForTest() == edited;
+		Check( plays == 6 && moved == 0 && redrawn && back && reread && kept,
+		       fmt( "the plugin, Random on 24 of 80: %d plays on the wheel they started with (%d not); Seed 6 another wheel, at once at rest (%s); Seed 5 the first again (%s); the "
+		            "file edited and chosen again, new text in the same places (%s); chosen again unchanged, the same wheel (%s)",
+		            plays, moved, redrawn ? "yes" : "NO", back ? "yes" : "NO", reread ? "yes" : "NO", kept ? "yes" : "NO" ) );
+	}
+	return Verdict();
+}
+
+//---------------------------------------------------------------------------
+// --wheel-custom: results on a wheel of N, and only the marked segments win.
+//---------------------------------------------------------------------------
+int snappedBet( const wheel::Face& f, int bet )
+{
+	int best = -1;
+	for( int v : { 1, 2, 5, 10, 20, 40, 45 } )
+	{
+		bool there = false;
+		for( const wheel::Segment& s : f.segment )
+			there = there || s.value == v;
+		if( there && ( best < 0 || std::abs( v - bet ) < std::abs( best - bet ) ) )
+			best = v;
+	}
+	return best;
+}
+
+/// Whether segment i of `f` is what `result` (with `bet`) asks for.
+bool fits( const wheel::Face& f, int i, Result result, int bet )
+{
+	const int n = f.Count();
+	auto at     = [ & ]( int k ) -> const wheel::Segment& { return f.segment[ static_cast< size_t >( ( ( k % n ) + n ) % n ) ]; };
+	if( !f.fromFile )
+	{
+		auto top = []( int v ) { return v == 40 || v == 45; };
+		const int b = snappedBet( f, bet );
+		switch( result )
+		{
+		case Result::Jackpot: return top( at( i ).value );
+		case Result::NearMiss: return !top( at( i ).value ) && ( top( at( i + 1 ).value ) || top( at( i - 1 ).value ) );
+		case Result::Lose: return at( i ).value != b && !top( at( i ).value );
+		case Result::Random: return true;
+		default: return at( i ).value == b;
+		}
+	}
+	auto marked  = [ & ]( int k ) { return at( k ).mark != wheel::Mark::None; };
+	auto jackpot = [ & ]( int k ) { return at( k ).mark == wheel::Mark::Jackpot; };
+	switch( result )
+	{
+	case Result::Win: return marked( i );
+	case Result::Jackpot: return jackpot( i );
+	case Result::NearMiss: return !marked( i ) && ( jackpot( i + 1 ) || jackpot( i - 1 ) );
+	case Result::Lose: return !marked( i );
+	case Result::Random: return true;
+	default: return at( i ).line == bet;
+	}
+}
+
+int runWheelCustom( const Perturb& perturb )
+{
+	std::printf( "\n=== wheel custom: every Result on wheels of 2 to 54, only the marked segments win, fair, C_P\n" );
+	const wheel::FileContents prizes = contentsOf( readBytes( fixturePath( "prizes.txt" ) ) );
+	struct Wheel
+	{
+		std::string name;
+		std::shared_ptr< const wheel::Face > face;
+	};
+	std::vector< Wheel > wheels;
+	for( int n : { 2, 8, 12, 24, 37, 54 } )
+		wheels.push_back( { fmt( "prizes.txt on %d", n ), std::make_shared< const wheel::Face >( wheel::FromFile( prizes, n, wheel::Lines::InOrder, wheel::ShortFile::Repeat, 0 ) ) } );
+	for( int n : { 2, 13 } )
+		wheels.push_back( { fmt( "the Big Six on %d", n ), std::make_shared< const wheel::Face >( wheel::BigSix( n ) ) } );
+
+	int plans = 0, unsettled = 0, offTarget = 0, wrongKind = 0, wrongOutcome = 0, fellBack = 0, badFall = 0;
+	double warpLo = 1e9, warpHi = 0.0;
+	std::string warps;
+	for( const Wheel& w : wheels )
+	{
+		const wheel::Face& f = *w.face;
+		std::vector< std::pair< Result, int > > asks = { { Result::Random, 0 }, { Result::Win, 0 }, { Result::Jackpot, 0 }, { Result::NearMiss, 0 }, { Result::Lose, 0 } };
+		if( f.fromFile )
+			asks.insert( asks.end(), { { Result::Fixed, 1 }, { Result::Fixed, 3 }, { Result::Fixed, 99 } } );
+		else
+			asks.insert( asks.end(), { { Result::Fixed, 1 }, { Result::Fixed, 7 }, { Result::Fixed, 40 } } );
+		double lo = 1e9, hi = 0.0;
+		for( const auto& ask : asks )
+			for( uint32_t seed = 1; seed <= 2; ++seed )
+			{
+				wheel::Request r;
+				r.face      = w.face;
+				r.result    = ask.first;
+				r.bet       = ask.second;
+				r.seed      = seed;
+				r.play      = 3;
+				r.duration  = 6.0;
+				r.stiffness = ClapperFromParam( 0.23f );
+				r.paintNow  = 0.3 * seed;
+				r.noShift   = perturb.noShift;
+				r.markedWinAny     = perturb.markedWinAny;
+				r.onePegPerSegment = perturb.onePegPerSegment;
+				const wheel::Plan p = wheel::MakePlan( r );
+				++plans;
+				unsettled += p.sim.settled ? 0 : 1;
+				const int drawn = segmentUnderClapper( p, p.playback.duration + 0.5 );
+				offTarget += ( drawn != p.wanted || p.Shown() != p.wanted ) ? 1 : 0;
+				//A Result nothing on this wheel fits is drawn at random, and only then.
+				bool any = false;
+				for( int i = 0; i < f.Count(); ++i )
+					any = any || fits( f, i, ask.first, ask.second );
+				fellBack += p.fellBack ? 1 : 0;
+				badFall += p.fellBack == any ? 1 : 0;
+				wrongKind += ( !p.fellBack && !fits( f, drawn, ask.first, ask.second ) ) ? 1 : 0;
+				const wheel::Segment& s = f.segment[ static_cast< size_t >( ( ( drawn % f.Count() ) + f.Count() ) % f.Count() ) ];
+				bool win = false, jackpot = false;
+				if( f.fromFile )
+				{
+					win     = s.mark != wheel::Mark::None;
+					jackpot = s.mark == wheel::Mark::Jackpot;
+				}
+				else
+				{
+					jackpot = s.value == 40 || s.value == 45;
+					win     = s.value == snappedBet( f, ask.second ) || jackpot;
+				}
+				wrongOutcome += ( p.outcome.win != win || p.outcome.jackpot != jackpot || p.outcome.text != s.board ) ? 1 : 0;
+				lo = std::min( lo, p.playback.warp );
+				hi = std::max( hi, p.playback.warp );
+			}
+		warpLo = std::min( warpLo, lo );
+		warpHi = std::max( warpHi, hi );
+		warps += fmt( " %d:%.2f-%.2f", f.Count(), lo, hi );
+	}
+	Check( unsettled == 0 && offTarget == 0 && wrongKind == 0 && badFall == 0,
+	       fmt( "%d plans on 8 wheels (2-54 segments, a file and the Big Six), every Result: at rest on the segment drawn, read under the clapper as painted (%d not, %d unsettled), "
+	            "of the kind asked (%d not); %d asks nothing on the wheel fits, drawn at random, and only those (%d not)",
+	            plans, offTarget, unsettled, wrongKind, fellBack, badFall ) );
+	Check( wrongOutcome == 0, fmt( "the outcome of each: a file's marked segments win ('*' the jackpot), its others never; the Big Six's as v0.1.1 (its bet's value, the joker, "
+	                              "the logo); the board's words the segment's (%d wrong)",
+	                              wrongOutcome ) );
+	//Every N meets Spin Time as the 54 does (v0.1.1: 0.95-1.65 over 3-12 s).
+	Check( warpLo >= 0.85 && warpHi <= 1.30, fmt( "6 s on every wheel, warp %.2f-%.2f (bound 0.85-1.30; v0.1.1's 54 here 1.01-1.06), by segments:%s", warpLo, warpHi, warps.c_str() ) );
+
+	//A file with no markers never wins.
+	{
+		auto plain = std::make_shared< const wheel::Face >( wheel::FromFile( contentsOf( "A\nB\nC\nD\nE\nF\nG\nH\n" ), 8, wheel::Lines::InOrder, wheel::ShortFile::Repeat, 0 ) );
+		int wins = 0, fell = 0, n = 0;
+		for( Result result : { Result::Random, Result::Win, Result::Jackpot } )
+			for( uint32_t seed = 1; seed <= 4; ++seed )
+			{
+				wheel::Request r;
+				r.face         = plain;
+				r.result       = result;
+				r.seed         = seed;
+				r.duration     = 4.0;
+				r.markedWinAny = perturb.markedWinAny;
+				const wheel::Plan p = wheel::MakePlan( r );
+				wins += p.outcome.win || p.outcome.jackpot ? 1 : 0;
+				fell += result != Result::Random && p.fellBack ? 1 : 0;
+				++n;
+			}
+		Check( wins == 0 && fell == 8, fmt( "a file with no markers: %d plays (Random, Win, Jackpot), %d won; Win and Jackpot drawn at random, as nothing fits (%d of 8)", n, wins, fell ) );
+	}
+	//Fair: each segment 1/N, for every N.
+	{
+		std::string chis;
+		bool fair = true;
+		for( int n : { 2, 8, 24, 37, 54 } )
+		{
+			wheel::Request r;
+			r.face       = std::make_shared< const wheel::Face >( wheel::FromFile( prizes, n, wheel::Lines::InOrder, wheel::ShortFile::Repeat, 0 ) );
+			r.result     = Result::Random;
+			r.biasedDraw = perturb.biasedDraw;
+			const long M = std::max( 400L * n, 20000L );
+			std::vector< long > count( static_cast< size_t >( n ), 0 );
+			for( long k = 0; k < M; ++k )
+			{
+				r.seed = static_cast< uint32_t >( k / 1000 );
+				r.play = static_cast< uint32_t >( k % 1000 );
+				++count[ static_cast< size_t >( wheel::Wanted( r ) ) ];
+			}
+			const double chi = chiSquare( count, std::vector< double >( static_cast< size_t >( n ), static_cast< double >( M ) / n ) );
+			fair             = fair && chi < chiSquareCritical( std::max( 1, n - 1 ) ) && *std::min_element( count.begin(), count.end() ) > 0;
+			chis += fmt( " %d:%.1f/%.1f", n, chi, chiSquareCritical( std::max( 1, n - 1 ) ) );
+		}
+		Check( fair, fmt( "Random, at least 400 draws a segment (20,000 in all on the smaller wheels): chi-square / critical by segments%s", chis.c_str() ) );
+	}
+	//C_P: whole pegs are invisible to the physics for every peg count used.
+	{
+		int identical = 0, right = 0, tried = 0;
+		std::string counts;
+		for( int pegs : { 37, 48, 56, 72 } )
+		{
+			wheel::Release r;
+			r.pegs      = pegs;
+			r.speed     = 6.0;
+			r.phase     = 0.287;
+			r.stiffness = 4.0;
+			const wheel::Simulation base = wheel::Simulate( r );
+			for( long k : { 1L, 7L, static_cast< long >( pegs / 2 ), static_cast< long >( pegs - 1 ) } )
+			{
+				wheel::Release m = r;
+				m.turns          = k;
+				const wheel::Simulation s = wheel::Simulate( m );
+				const bool same = base.settled && s.phase.size() == base.phase.size() && std::memcmp( s.phase.data(), base.phase.data(), s.phase.size() * sizeof( double ) ) == 0
+				                  && std::memcmp( s.clapper.data(), base.clapper.data(), s.clapper.size() * sizeof( double ) ) == 0;
+				identical += same ? 1 : 0;
+				right += s.gap == static_cast< int >( ( ( base.gap - k ) % pegs + pegs ) % pegs ) ? 1 : 0;
+				++tried;
+			}
+			counts += fmt( " %d", pegs );
+		}
+		Check( identical == tried && right == tried, fmt( "C_P for%s pegs: turned 1, 7, P/2 and P-1 whole pegs, the phase and the clapper bit-identical (%d of %d), the gap moved by them (%d)",
+		                                                counts.c_str(), identical, tried, right ) );
+	}
+	return Verdict();
+}
+
+//---------------------------------------------------------------------------
+// --wheel-geometry: equal segments, and every label inside its own.
+//---------------------------------------------------------------------------
+/// The wheel's canvas (kWheel): the hub at (0, -0.035), 0.46 canvas units a metre.
+void wheelPixel( const Rig& rig, double zoom, double mx, double my, double& x, double& y )
+{
+	x = 0.5 * rig.width + ( 0.46 * mx ) * rig.height * zoom;
+	y = 0.5 * rig.height + ( -0.035 + 0.46 * my ) * rig.height * zoom;
+}
+
+std::string stressValues()
+{
+	//Wide letters, digits and $, long lines, markers (which keep clear of the
+	//star), short ones, and the reel symbols.
+	const char* const lines[] = { "*WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW", "$1000000", "%MMMMMMMMMMMMMMMM", "🍒", "FREE DRINK FOR EVERYONE AT THE BAR", "💎", "*7️⃣", "W",
+		                          "88888888888888888888", "%$5", "🔔", "MW MW MW MW MW MW", "*JACKPOT", "I", "$20", "🍉" };
+	std::string s;
+	for( int i = 0; i < 54; ++i )
+		s += std::string( lines[ i % 16 ] ) + "\n";
+	return s;
+}
+
+int runWheelGeometry( const Perturb& perturb )
+{
+	std::printf( "\n=== wheel geometry: equal segments, and every label and symbol inside its own, from the pixels\n" );
+	const std::string path = writeScratch( "geometry.txt", stressValues() );
+	for( int n : { 2, 8, 24, 54 } )
+	{
+		Rig rig;
+		if( !rig.Init( 1280, 720 ) )
+			return 1;
+		rig.plugin.Flags().noLabelShrink  = perturb.noLabelShrink;
+		rig.plugin.Flags().segmentsOffset = perturb.segmentsOffByOne ? 1 : 0;
+		setGame( rig, Game::MoneyWheel );
+		rig.Set( PT_SEGMENTS, static_cast< float >( n ) );
+		rig.Set( PT_LINES, static_cast< float >( wheel::Lines::InOrder ) );
+		rig.plugin.SetTextParameter( PT_WHEEL_FILE, path.c_str() );
+		rig.Render( 2 );
+		const double zoom   = ZoomFromParam( rig.plugin.GetFloatParameter( PT_ZOOM ) );
+		const double metre  = 0.46 * rig.height * zoom;//pixels a metre
+		const double angle0 = rig.plugin.CurrentPlay().wheel.PaintAngle( rig.plugin.PlaybackSeconds() );
+		const wheel::Face& face = rig.plugin.CurrentPlay().wheel.WheelFace();
+
+		//The id picture round a circle at 0.6 m: where the segment changes.
+		rig.plugin.SetFlatForTest( 2 );
+		rig.Render( 1 );
+		Floats img = rig.Output();
+		const int samples = 8192;
+		std::vector< int > id( static_cast< size_t >( samples ) );
+		for( int i = 0; i < samples; ++i )
+		{
+			const double a = 2.0 * kPi * ( i + 0.5 ) / samples;
+			double x = 0.0, y = 0.0;
+			wheelPixel( rig, zoom, 0.6 * std::cos( a ), 0.6 * std::sin( a ), x, y );
+			const size_t at = ( static_cast< size_t >( y ) * rig.width + static_cast< size_t >( x ) ) * 4;
+			id[ static_cast< size_t >( i ) ] = static_cast< int >( std::lround( img[ at ] * 64.0f ) );
+		}
+		std::vector< int > edges;
+		for( int i = 0; i < samples; ++i )
+			if( id[ static_cast< size_t >( i ) ] != id[ static_cast< size_t >( ( i + samples - 1 ) % samples ) ] )
+				edges.push_back( i );
+		double worst = 0.0;
+		int stepsWrong = 0;
+		for( size_t e = 0; e < edges.size(); ++e )
+		{
+			const int from = edges[ e ], to = edges[ ( e + 1 ) % edges.size() ];
+			const double arc = 2.0 * kPi * ( ( to - from + samples ) % samples ) / samples;
+			worst            = std::max( worst, std::fabs( arc - 2.0 * kPi / n ) );
+			const int j = id[ static_cast< size_t >( from ) ], before = id[ static_cast< size_t >( ( from + samples - 1 ) % samples ) ];
+			stepsWrong += ( j - before + n ) % n != 1 ? 1 : 0;
+		}
+		//Two pixels at 0.6 m, and the sampling's own step, either end.
+		const double bound = 2.0 / ( 0.6 * metre ) + 2.0 * 2.0 * kPi / samples;
+
+		//The ink picture: R this segment's label, G a neighbour's reaching in.
+		rig.plugin.SetFlatForTest( 3 );
+		rig.Render( 1 );
+		img = rig.Output();
+		const double seg = 2.0 * kPi / n;
+		long spill = 0, nearDivider = 0, offBand = 0, inked = 0;
+		std::vector< long > perSegment( static_cast< size_t >( n ), 0 );
+		double closest = 1e9;
+		for( int y = 0; y < rig.height; ++y )
+			for( int x = 0; x < rig.width; ++x )
+			{
+				const float* px = &img[ ( static_cast< size_t >( y ) * rig.width + x ) * 4 ];
+				if( px[ 1 ] > 0.5f )
+					++spill;
+				if( px[ 0 ] < 0.5f )
+					continue;
+				++inked;
+				const double mx = ( ( x + 0.5 - 0.5 * rig.width ) / ( rig.height * zoom ) ) / 0.46;
+				const double my = ( ( y + 0.5 - 0.5 * rig.height ) / ( rig.height * zoom ) + 0.035 ) / 0.46;
+				const double r  = std::hypot( mx, my );
+				const double u  = wrapAngle( std::atan2( my, mx ) - angle0 ) / seg;
+				const double f  = u - std::floor( u );
+				const int j     = static_cast< int >( std::floor( u ) ) % n;
+				if( j >= 0 && j < n )
+					++perSegment[ static_cast< size_t >( j ) ];
+				const double fromDivider = r * std::sin( std::min( 0.5 * kPi, std::min( f, 1.0 - f ) * seg ) );
+				closest = std::min( closest, fromDivider );
+				nearDivider += fromDivider < 0.0035 + 1.0 / metre ? 1 : 0;
+				offBand += ( r < 0.286 || r > 0.794 ) ? 1 : 0;
+			}
+		int bare = 0, labelled = 0;
+		for( int j = 0; j < n && j < face.Count(); ++j )
+		{
+			const wheel::Segment& s = face.segment[ static_cast< size_t >( j ) ];
+			if( s.symbol == 0 && s.label.empty() )
+				continue;
+			++labelled;
+			bare += perSegment[ static_cast< size_t >( j ) ] < 20 ? 1 : 0;
+		}
+		std::vector< float > heights;
+		for( const wheel::LabelFit& fit : rig.plugin.LabelFitsForTest() )
+			if( fit.symbol == 0 && fit.h > 0.0f )
+				heights.push_back( fit.h );
+		std::sort( heights.begin(), heights.end() );
+		const double px1080 = 0.46 * 1080.0 * zoom;
+		Check( static_cast< int >( edges.size() ) == n && stepsWrong == 0 && worst <= bound && spill == 0 && nearDivider == 0 && offBand == 0 && bare == 0,
+		       fmt( "%d segments: %zu edges round the wheel, each arc within %.4f rad of 2pi/%d (bound %.4f), in order (%d not); %ld ink pixels, none a neighbour's (%ld), none "
+		            "within the divider and a pixel (%ld; closest %.4f m), none off the bands (%ld); %d of %d labels and symbols showing; type %.3f-%.3f m (%.0f-%.0f px at 1080p)",
+		            n, edges.size(), worst, n, bound, stepsWrong, inked, spill, nearDivider, closest, offBand, labelled - bare, labelled, heights.empty() ? 0.0 : heights.front(),
+		            heights.empty() ? 0.0 : heights.back(), heights.empty() ? 0.0 : heights.front() * px1080, heights.empty() ? 0.0 : heights.back() * px1080 ) );
 	}
 	return Verdict();
 }
@@ -2509,6 +3385,39 @@ int runBench()
 			std::sort( times.begin(), times.end() );
 			std::printf( "  %-20s %-6s median %6.2f ms/frame, worst %6.2f  (%4.1f%% of 60 fps)\n", names[ g ], size.name, times[ 20 ], times.back(), 100.0 * times[ 20 ] / ( 1000.0 / 60.0 ) );
 		}
+	//jackpot#1: wheels from a file, long labels, in place of the Big Six.
+	{
+		std::string lines;
+		for( int i = 1; i <= 80; ++i )
+			lines += ( i % 9 == 0 ? "*" : i % 7 == 0 ? "%" : "" ) + std::string( "WINNER WINNER CHICKEN DINNER " ) + std::to_string( i ) + "\n";
+		const std::string path = writeScratch( "bench.txt", lines );
+		for( int n : { 54, 24, 12 } )
+			for( const Size& size : sizes )
+			{
+				Rig rig;
+				if( !rig.Init( size.w, size.h ) )
+					return 1;
+				setGame( rig, Game::MoneyWheel );
+				rig.Set( PT_SPIN_TIME, ParamFromSpinTime( 12.0 ) );
+				rig.Set( PT_SEGMENTS, static_cast< float >( n ) );
+				rig.plugin.SetTextParameter( PT_WHEEL_FILE, path.c_str() );
+				rig.Render( 2 );
+				rig.Press( PT_PLAY );
+				rig.Render( 120 );
+				glFinish();
+				std::vector< double > times;
+				for( int f = 0; f < 40; ++f )
+				{
+					const auto start = std::chrono::steady_clock::now();
+					rig.Render( 1 );
+					glFinish();
+					times.push_back( std::chrono::duration< double, std::milli >( std::chrono::steady_clock::now() - start ).count() );
+				}
+				std::sort( times.begin(), times.end() );
+				std::printf( "  %-20s %-6s median %6.2f ms/frame, worst %6.2f  (%4.1f%% of 60 fps)\n", fmt( "wheel, %d from file", n ).c_str(), size.name, times[ 20 ], times.back(),
+				             100.0 * times[ 20 ] / ( 1000.0 / 60.0 ) );
+			}
+	}
 	std::printf( "\n=== bench: planning a play (CPU, on the worker), median of 5\n" );
 	for( int g = 1; g < 5; ++g )
 	{
@@ -2533,7 +3442,8 @@ const std::vector< CheckEntry >& checks()
 	static const std::vector< CheckEntry > list = {
 		{ "slots", runSlots },       { "nearmiss", runNearMiss },       { "blur", runBlur },
 		{ "slots-readback", runSlotsReadback }, { "roulette", runRoulette }, { "roulette-readback", runRouletteReadback },
-		{ "wheel", runWheel },       { "wheel-readback", runWheelReadback }, { "craps", runCraps },
+		{ "wheel", runWheel },       { "wheel-readback", runWheelReadback }, { "wheel-file", runWheelFile },
+		{ "wheel-draw", runWheelDraw }, { "wheel-custom", runWheelCustom }, { "wheel-geometry", runWheelGeometry }, { "craps", runCraps },
 		{ "lottery", runLottery },   { "shower", runShower },           { "pile", runPile },
 		{ "duration", runDuration },
 		{ "defaults", runDefaults }, { "names", runNames },             { "determinism", runDeterminism },
@@ -2547,7 +3457,7 @@ const std::vector< CheckEntry >& checks()
 /// are -- `--offline` (what CI runs) is everything else's complement.
 bool isOffline( const std::string& flag )
 {
-	static const char* const offline[] = { "slots", "nearmiss", "roulette", "wheel", "craps", "lottery", "shower", "pile", "duration", "defaults", "names", "determinism" };
+	static const char* const offline[] = { "slots", "nearmiss", "roulette", "wheel", "wheel-file", "wheel-draw", "wheel-custom", "craps", "lottery", "shower", "pile", "duration", "defaults", "names", "determinism" };
 	for( const char* name : offline )
 		if( flag == name )
 			return true;
@@ -2577,6 +3487,17 @@ int runNegative( bool offlineOnly = false )
 	add( "wheel", runWheel, "the pegs turned half a segment: the trajectory is not the same", []( Perturb& p ) { p.pegsSeeShift = true; } );
 	add( "wheel", runWheel, "Random drawn Below( 53 )", []( Perturb& p ) { p.biasedDraw = true; } );
 	add( "wheel-readback", runWheelReadback, "no segment shift, read from the picture", []( Perturb& p ) { p.noShift = true; } );
+	add( "wheel-file", runWheelFile, "a non-ASCII path widened byte by byte, as a narrow fopen reads it", []( Perturb& p ) { p.widenBytes = true; } );
+	add( "wheel-file", runWheelFile, "the BOM and CR kept as text, LF the only line end", []( Perturb& p ) { p.keepBomAndCr = true; } );
+	add( "wheel-file", runWheelFile, "no markers: a leading * or % is just a character", []( Perturb& p ) { p.noMarkers = true; } );
+	add( "wheel-draw", runWheelDraw, "Sattolo's shuffle (j below i, not i + 1): no value ever stays in its place", []( Perturb& p ) { p.sattolo = true; } );
+	add( "wheel-draw", runWheelDraw, "the Random lines drawn again for every play", []( Perturb& p ) { p.drawPerSpin = true; } );
+	add( "wheel-custom", runWheelCustom, "no segment shift on wheels of 2 to 54", []( Perturb& p ) { p.noShift = true; } );
+	add( "wheel-custom", runWheelCustom, "Random drawn Below( N - 1 ) on wheels of 2 to 54", []( Perturb& p ) { p.biasedDraw = true; } );
+	add( "wheel-custom", runWheelCustom, "every segment of a file wins, marked or not", []( Perturb& p ) { p.markedWinAny = true; } );
+	add( "wheel-custom", runWheelCustom, "a peg a segment (P = N): the clapper meets 2 pegs on a wheel of 2", []( Perturb& p ) { p.onePegPerSegment = true; } );
+	add( "wheel-geometry", runWheelGeometry, "every label at its largest: no shrinking to fit", []( Perturb& p ) { p.noLabelShrink = true; } );
+	add( "wheel-geometry", runWheelGeometry, "the shader told one segment more than the wheel has", []( Perturb& p ) { p.segmentsOffByOne = true; } );
 	add( "nearmiss", runNearMiss, "a uniform virtual reel: the near miss is the physical strip's", []( Perturb& p ) { p.uniformVirtual = true; } );
 	add( "slots-readback", runSlotsReadback, "the reels drawn one stop on", []( Perturb& p ) { p.reelOffset = true; } );
 	add( "blur", runBlur, "scored against the instant, not the shutter", []( Perturb& p ) { p.noBlur = true; } );
@@ -2659,7 +3580,8 @@ int main( int argc, char** argv )
 			             "  --script PATH     cues for --pipe/--film: 'frame Name value'\n\n"
 			             "  --shaders --out DIR   every program as compiled, written out and through the driver\n\n"
 			             "  checks: --slots --nearmiss --blur --slots-readback --roulette --roulette-readback\n"
-			             "          --wheel --wheel-readback --craps --lottery --shower --pile --duration --defaults\n"
+			             "          --wheel --wheel-readback --wheel-file --wheel-draw --wheel-custom --wheel-geometry\n"
+			             "          --craps --lottery --shower --pile --duration --defaults\n"
 			             "          --names --determinism --over-check --resize --fonts --state --negative --bench\n"
 			             "  --offline         the checks and negative controls that need no GL context\n" );
 			return 0;

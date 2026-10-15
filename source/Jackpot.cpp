@@ -48,6 +48,9 @@ const char* const kShowerNames[]   = { "Off", "On Win", "On Jackpot", "Always" }
 const char* const kPatternNames[]  = { "Rain", "Fountain", "Burst", "Pour" };
 const char* const kPiecesNames[]   = { "Chips", "Coins", "Mixed" };
 const char* const kBackdropNames[] = { "None", "Felt", "Dark" };
+const char* const kLinesNames[]    = { "In Order", "Random" };
+const char* const kShortNames[]    = { "Repeat", "Fewer Segments" };
+constexpr int kLabelWidth          = 2 + wheel::kMaxLabel;///< texels a row of the label texture: two of head, then the characters
 
 /// Colours arrive as display values; the shader lights in linear.
 void linearColour( const float* p, float out[ 3 ] )
@@ -141,6 +144,9 @@ JackpotPlugin::JackpotPlugin( bool effect ) : isEffect( effect )
 	params[ PT_ROTOR_SPEED ]  = 0.5f;
 	params[ PT_DEFLECTORS ]   = 1.0f;
 	params[ PT_CLAPPER ]      = 0.23f;
+	params[ PT_SEGMENTS ]     = static_cast< float >( wheel::kSegments );
+	params[ PT_LINES ]        = static_cast< float >( wheel::Lines::Random );
+	params[ PT_SHORT_FILE ]   = static_cast< float >( wheel::ShortFile::Repeat );
 	params[ PT_PYRAMIDS ]     = 1.0f;
 	params[ PT_PUCK ]         = 1.0f;
 	params[ PT_BALLS ]        = 49.0f;
@@ -207,6 +213,13 @@ JackpotPlugin::JackpotPlugin( bool effect ) : isEffect( effect )
 	boolean( PT_DEFLECTORS, "Deflectors" );
 
 	standard( PT_CLAPPER, "Clapper" );
+	integer( PT_SEGMENTS, "Segments", static_cast< float >( wheel::kMinSegments ), static_cast< float >( wheel::kSegments ) );
+	//SetFileParamInfo ONLY: it registers the parameter itself, and a
+	//SetParamInfo for the same id as well registers it twice (gridiron's trap:
+	//a phantom trailing parameter, and FF_INSTANTIATE_GL fails).
+	SetFileParamInfo( PT_WHEEL_FILE, "Wheel File", { "txt" }, "" );
+	option( PT_LINES, "Lines", kLinesNames, static_cast< int >( wheel::Lines::Count ) );
+	option( PT_SHORT_FILE, "Short File", kShortNames, static_cast< int >( wheel::ShortFile::Count ) );
 
 	boolean( PT_PYRAMIDS, "Pyramids" );
 	boolean( PT_PUCK, "Puck" );
@@ -252,7 +265,8 @@ JackpotPlugin::JackpotPlugin( bool effect ) : isEffect( effect )
 		SetParamGroup( id, "Slots" );
 	for( unsigned int id = PT_WHEEL; id <= PT_DEFLECTORS; ++id )
 		SetParamGroup( id, "Roulette" );
-	SetParamGroup( PT_CLAPPER, "Money Wheel" );
+	for( unsigned int id = PT_CLAPPER; id <= PT_SHORT_FILE; ++id )
+		SetParamGroup( id, "Money Wheel" );
 	for( unsigned int id = PT_PYRAMIDS; id <= PT_PUCK; ++id )
 		SetParamGroup( id, "Craps" );
 	for( unsigned int id = PT_BALLS; id <= PT_AIR; ++id )
@@ -317,12 +331,23 @@ FFResult JackpotPlugin::InitGL( const FFGLViewportStruct* vp )
 		return FF_FAIL;
 	}
 
-	GLuint textures[ 4 ];
-	glGenTextures( 4, textures );
+	GLuint textures[ 5 ];
+	glGenTextures( 5, textures );
 	atlasTexture  = textures[ 0 ];
 	symbolTexture = textures[ 1 ];
 	blankTexture  = textures[ 2 ];
 	ballTexture   = textures[ 3 ];
+	labelTexture  = textures[ 4 ];
+	//The money wheel's labels: one empty row until a wheel needs them, so the
+	//sampler is never bound to an incomplete texture.
+	{
+		const float empty[ 4 ] = {};
+		glBindTexture( GL_TEXTURE_2D, labelTexture );
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA32F, 1, 1, 0, GL_RGBA, GL_FLOAT, empty );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+		labelsFace.reset();
+	}
 	glBindTexture( GL_TEXTURE_2D, ballTexture );
 	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA32F, kBallSlots, 3, 0, GL_RGBA, GL_FLOAT, nullptr );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
@@ -367,7 +392,7 @@ FFResult JackpotPlugin::DeInitGL()
 	showerProgram.FreeGLResources();
 	compositeProgram.FreeGLResources();
 	quad.Release();
-	GLuint textures[ 5 ] = { atlasTexture, symbolTexture, blankTexture, showerColour, ballTexture };
+	GLuint textures[ 6 ] = { atlasTexture, symbolTexture, blankTexture, showerColour, ballTexture, labelTexture };
 	for( GLuint t : textures )
 		if( t != 0 )
 			glDeleteTextures( 1, &t );
@@ -381,7 +406,8 @@ FFResult JackpotPlugin::DeInitGL()
 		glDeleteBuffers( 1, &quadVbo );
 	if( showerVao )
 		glDeleteVertexArrays( 1, &showerVao );
-	atlasTexture = symbolTexture = blankTexture = showerColour = showerDepth = showerFbo = showerVbo = quadVbo = showerVao = ballTexture = 0;
+	atlasTexture = symbolTexture = blankTexture = showerColour = showerDepth = showerFbo = showerVbo = quadVbo = showerVao = ballTexture = labelTexture = 0;
+	labelsFace.reset();
 	showerWidth = showerHeight = 0;
 	return FF_SUCCESS;
 }
@@ -495,9 +521,12 @@ wheel::Request JackpotPlugin::WheelRequest() const
 	r.duration  = PlayDuration();
 	r.stiffness = ClapperFromParam( params[ PT_CLAPPER ] );
 	r.paintNow  = play.game == Game::MoneyWheel ? play.wheel.PaintAngle( clock - playStart ) : wheelAngle;
+	r.face      = wheelFace ? wheelFace : wheel::DefaultFace();
 	r.noShift   = flags.noShift;
 	r.noWarp    = flags.noWarp;
 	r.biasedDraw = flags.biasedDraw;
+	r.markedWinAny     = flags.markedWinAny;
+	r.onePegPerSegment = flags.onePegPerSegment;
 	return r;
 }
 
@@ -721,8 +750,17 @@ void JackpotPlugin::OnRest()
 	const ShowerWhen when = static_cast< ShowerWhen >( OptionIndex( params[ PT_SHOWER ], static_cast< int >( ShowerWhen::Count ) ) );
 	if( ( when == ShowerWhen::OnWin && o.win ) || ( when == ShowerWhen::OnJackpot && o.jackpot ) )
 		shower.Start( o.jackpot ? 3.5 : 2.5, o.jackpot ? 2.0 : 1.0 );
+	std::string where;
+	if( play.game == Game::MoneyWheel && play.wheel.WheelFace().fromFile )
+	{
+		//A file's wheel: which line, and a Result nothing on it fits.
+		const wheel::Segment& s = play.wheel.WheelFace().segment[ static_cast< size_t >( play.wheel.Shown() ) ];
+		where = ", line " + std::to_string( s.line ) + " of the wheel file";
+		if( play.wheel.fellBack )
+			where += " (nothing on this wheel fits Result " + std::string( kResultNames[ static_cast< int >( play.wheel.request.result ) ] ) + ", so it was drawn at random)";
+	}
 	diag::info( std::string( kGameNames[ static_cast< int >( play.game ) ] ) + " play " + std::to_string( playIndex ) + ": " + o.text
-	            + ( o.jackpot ? " (JACKPOT)" : o.win ? " (win)" : o.nearMiss ? " (near miss)" : "" ) + ", warp "
+	            + ( o.jackpot ? " (JACKPOT)" : o.win ? " (win)" : o.nearMiss ? " (near miss)" : "" ) + where + ", warp "
 	            + std::to_string( play.Clock().warp ) );
 }
 
@@ -731,13 +769,19 @@ void JackpotPlugin::Tick( double dt )
 	clock += dt;
 	frameDt = dt > 0.0 ? dt : frameDt;
 	const Game game = CurrentGame();
+	UpdateWheelFace();
 
 	//A new game, or a change that alters what is at rest before the first play,
 	//lays the table out again at once.
 	const bool idle    = play.Idle() && !pending.valid();
 	const bool changed = params[ PT_REELS ] != layoutKey[ 0 ] || params[ PT_SYMBOLS ] != layoutKey[ 1 ] || params[ PT_WHEEL ] != layoutKey[ 2 ]
 	                     || params[ PT_BALLS ] != layoutKey[ 3 ] || ( idle && game == Game::Craps && ( params[ PT_RESULT ] != layoutKey[ 4 ] || params[ PT_FIXED_NUMBER ] != layoutKey[ 5 ] ) );
-	if( !laidOut || static_cast< int >( game ) != layoutGame || ( idle && changed ) )
+	//A new money wheel (Segments, the file, Lines, Short File, Seed on a
+	//Random draw) is painted on once the wheel is at rest; a spin under way
+	//finishes on the wheel it started with.
+	const bool newFace = game == Game::MoneyWheel && play.game == Game::MoneyWheel && play.wheel.request.face != wheelFace && !pending.valid()
+	                     && ( play.Idle() || clock - playStart >= play.Clock().duration );
+	if( !laidOut || static_cast< int >( game ) != layoutGame || ( idle && changed ) || newFace )
 		Relayout();
 	else if( changed )
 	{
@@ -836,6 +880,7 @@ void JackpotPlugin::ResolveFont()
 		typeface.UseBuiltin();
 	atlas          = typeface.Build();
 	resolvedFamily = atlas.family;
+	++atlasGeneration;
 	const int index = resolvedFamily.empty() ? 0 : FindFontByFamily( resolvedFamily ) + 1;
 	if( index > 0 || resolvedFamily.empty() )
 		params[ PT_FONT ] = static_cast< float >( std::max( index, 0 ) );
@@ -1107,21 +1152,170 @@ void JackpotPlugin::DrawRoulette( FFGLShader& shader, double t, int width, int h
 }
 void JackpotPlugin::DrawWheel( FFGLShader& shader, double t )
 {
-	const wheel::Plan& p           = play.wheel;
-	const std::vector< int >& layout = wheel::Layout();
-	GLint values[ wheel::kSegments ];
-	for( int i = 0; i < wheel::kSegments; ++i )
-		values[ i ] = layout[ static_cast< size_t >( i ) ];
+	const wheel::Plan& p    = play.wheel;
+	const wheel::Face& face = p.WheelFace();
+	const int n             = face.Count();
+	//v0.1.1's wheel goes through v0.1.1's shader path (Layout, the spans);
+	//anything else through the label texture (jackpot#1).
+	const bool custom = !face.IsBigSix54();
+	GLint values[ wheel::kSegments ] = {};
+	for( int i = 0; i < n && i < wheel::kSegments; ++i )
+		values[ i ] = face.segment[ static_cast< size_t >( i ) ].value;
 	const bool atRest  = !p.idle && t >= p.playback.duration && p.sim.settled;
-	const int shown    = ( ( p.sim.segment - p.shift ) % wheel::kSegments + wheel::kSegments ) % wheel::kSegments;
+	const int shown    = p.Shown();
 	const double since = clock - winSince;
 	shader.Set( "WheelAngle", static_cast< float >( std::fmod( p.PaintAngle( t ), 2.0 * kPi ) ) );
 	shader.Set( "ClapperAngle", static_cast< float >( p.Clapper( t ) ) );
 	glUniform1iv( shader.FindUniform( "Layout" ), wheel::kSegments, values );
 	shader.Set( "Highlight", atRest ? shown : -1 );
 	shader.Set( "Celebrate", atRest && p.outcome.win && since >= 0.0 && since < kBannerFor ? 1 : 0 );
+	shader.Set( "Custom", custom ? 1 : 0 );
+	shader.Set( "Segments", n + flags.segmentsOffset );
+	shader.Set( "PegCount", n * p.pegsPer );
+	shader.Set( "Labels", 4 );
+	shader.Set( "Symbols", 2 );
+	shader.Set( "SymbolsSize", static_cast< float >( SymbolAtlas::kWidth ), static_cast< float >( SymbolAtlas::kHeight ) );
+	if( custom )
+		UploadLabels( p.request.face ? p.request.face : wheel::DefaultFace() );
+	glActiveTexture( GL_TEXTURE4 );
+	glBindTexture( GL_TEXTURE_2D, labelTexture );
+	glActiveTexture( GL_TEXTURE0 );
 	//= mirrored in Shaders.cpp (kWheel's SPAN_ constants).
 	SetTextUniforms( shader, { "$1", "$2", "$5", "$10", "$20", "JOKER", "JACKPOT" } );
+}
+
+/// The label texture: a row a segment, RGBA float, read with texelFetch.
+/// Texel 0 (style, reel symbol, characters, set across), texel 1 (height or
+/// the symbol's half size, anchor, ink left, ink width), then one glyph a
+/// texel. = mirrored in Shaders.cpp (kWheel: labelDistance, labelSymbol).
+void JackpotPlugin::UploadLabels( const std::shared_ptr< const wheel::Face >& face )
+{
+	if( face == labelsFace && labelsAtlasGeneration == atlasGeneration && labelsNoShrink == flags.noLabelShrink )
+		return;
+	wheel::FitTestFlags fitFlags;
+	fitFlags.noShrink = flags.noLabelShrink;
+	labelFits         = wheel::FitLabels( *face, atlas, fitFlags );
+	const int n       = face->Count();
+	std::vector< float > data( static_cast< size_t >( kLabelWidth ) * static_cast< size_t >( n ) * 4, 0.0f );
+	for( int j = 0; j < n; ++j )
+	{
+		const wheel::Segment& s  = face->segment[ static_cast< size_t >( j ) ];
+		const wheel::LabelFit& f = labelFits[ static_cast< size_t >( j ) ];
+		float* row               = &data[ static_cast< size_t >( j ) * kLabelWidth * 4 ];
+		row[ 0 ] = static_cast< float >( s.style );
+		row[ 1 ] = static_cast< float >( f.symbol );
+		row[ 2 ] = static_cast< float >( std::min( f.glyphs.size(), static_cast< size_t >( wheel::kMaxLabel ) ) );
+		row[ 3 ] = f.across ? 1.0f : 0.0f;
+		row[ 4 ] = f.symbol != 0 ? f.symbolHalf : f.h;
+		row[ 5 ] = f.anchor;
+		row[ 6 ] = f.inkLeft;
+		row[ 7 ] = f.inkWidth;
+		for( size_t k = 0; k < f.glyphs.size() && k < static_cast< size_t >( wheel::kMaxLabel ); ++k )
+			row[ ( 2 + k ) * 4 ] = static_cast< float >( f.glyphs[ k ] );
+	}
+	glBindTexture( GL_TEXTURE_2D, labelTexture );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA32F, kLabelWidth, n, 0, GL_RGBA, GL_FLOAT, data.data() );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+	glBindTexture( GL_TEXTURE_2D, 0 );
+	labelsFace            = face;
+	labelsAtlasGeneration = atlasGeneration;
+	labelsNoShrink        = flags.noLabelShrink;
+}
+
+//---------------------------------------------------------------------------
+// The money wheel's face: the Big Six, or a Wheel File (jackpot#1).
+//---------------------------------------------------------------------------
+namespace
+{
+bool SameEntries( const wheel::FileContents& a, const wheel::FileContents& b )
+{
+	if( a.entries.size() != b.entries.size() )
+		return false;
+	for( size_t i = 0; i < a.entries.size(); ++i )
+	{
+		const wheel::Entry& x = a.entries[ i ];
+		const wheel::Entry& y = b.entries[ i ];
+		if( x.label != y.label || x.symbol != y.symbol || x.mark != y.mark || x.line != y.line )
+			return false;
+	}
+	return true;
+}
+} // namespace
+
+void JackpotPlugin::UpdateWheelFace()
+{
+	//The file, read here (the render thread, a frame's worth of work at most:
+	//a wheel file is capped at 1 MB) whenever its path is set, the same path
+	//again included -- choosing a file again re-reads it.
+	bool reload = false;
+	std::string path;
+	{
+		std::lock_guard< std::mutex > lock( textMutex );
+		if( wheelFileDirty )
+		{
+			reload         = true;
+			wheelFileDirty = false;
+			path           = wheelFilePath;
+		}
+	}
+	if( reload )
+	{
+		wheel::FileContents contents;
+		std::string why, message;
+		bool ok = false;
+		if( path.empty() )
+			message = wheelFileOk ? "Wheel File cleared: the money wheel is the Big Six" : "";
+		else if( wheel::LoadWheelFile( path, contents, why ) )
+		{
+			ok      = true;
+			message = "wheel file " + path + ": " + std::to_string( contents.entries.size() ) + " values, " + std::to_string( contents.marked ) + " marked, read as "
+			          + contents.encoding;
+			for( const std::string& note : contents.notes )
+				message += "; " + note;
+		}
+		else
+			message = "the wheel file " + why + ", so the money wheel is the Big Six: " + path;
+		wheelFileStatus = ok || path.empty() ? std::string() : why;
+		if( ok != wheelFileOk || !SameEntries( contents, wheelFile ) )
+			++wheelFileGeneration;
+		wheelFileOk = ok;
+		wheelFile   = std::move( contents );
+		//Once for each thing that happens, however often a host sets the path.
+		if( !message.empty() && message != wheelFileLogged )
+		{
+			if( ok || path.empty() )
+				diag::info( message );
+			else
+			{
+				diag::warn( message );
+				FFGLLog::LogToHost( ( "Jackpot: " + message ).c_str() );
+			}
+			wheelFileLogged = message;
+		}
+	}
+
+	FaceKey key;
+	key.segments   = std::clamp( static_cast< int >( std::lround( params[ PT_SEGMENTS ] ) ), wheel::kMinSegments, wheel::kSegments );
+	key.lines      = OptionIndex( params[ PT_LINES ], static_cast< int >( wheel::Lines::Count ) );
+	key.shortFile  = OptionIndex( params[ PT_SHORT_FILE ], static_cast< int >( wheel::ShortFile::Count ) );
+	key.generation = wheelFileGeneration;
+	key.seed       = static_cast< uint32_t >( std::clamp( std::lround( params[ PT_SEED ] ), 0L, 9999L ) );
+	key.salt       = flags.drawPerSpin ? playIndex : 0u;
+	if( faceKeySet && key == faceKey && wheelFace )
+		return;
+	faceKey    = key;
+	faceKeySet = true;
+	wheel::FaceTestFlags faceFlags;
+	faceFlags.salt  = key.salt;
+	wheel::Face next = wheelFileOk ? wheel::FromFile( wheelFile, key.segments, static_cast< wheel::Lines >( key.lines ), static_cast< wheel::ShortFile >( key.shortFile ), key.seed, faceFlags )
+	                               : wheel::BigSix( key.segments );
+	//v0.1.1's wheel is the one shared face, so a play made at the defaults
+	//holds exactly what every other does.
+	if( next.IsBigSix54() )
+		wheelFace = wheel::DefaultFace();
+	else if( !wheelFace || !( *wheelFace == next ) )
+		wheelFace = std::make_shared< const wheel::Face >( std::move( next ) );
 }
 namespace
 {
@@ -1414,7 +1608,7 @@ FFResult JackpotPlugin::ProcessOpenGL( ProcessOpenGLStruct* pgl )
 		bindUnit( 2, symbolTexture );
 		glViewport( hostViewport[ 0 ], hostViewport[ 1 ], width, height );
 		quad.Draw();
-		unbindTextureUnits( 4 );
+		unbindTextureUnits( 5 );
 		glActiveTexture( GL_TEXTURE0 );
 	}
 
@@ -1496,6 +1690,13 @@ FFResult JackpotPlugin::SetTextParameter( unsigned int index, const char* value 
 			fontDirty   = true;
 		}
 		return FF_SUCCESS;
+	case PT_WHEEL_FILE:
+		//Only stored: the file is read on the render thread (UpdateWheelFace),
+		//never here and never in the constructor. Setting the same path again
+		//re-reads it, so an edited file is picked up by choosing it again.
+		wheelFilePath  = incoming;
+		wheelFileDirty = true;
+		return FF_SUCCESS;
 	default:
 		return FF_FAIL;
 	}
@@ -1514,6 +1715,7 @@ char* JackpotPlugin::GetTextParameter( unsigned int index )
 	{
 	case PT_FONT_FILE: source = &fontFilePath; break;
 	case PT_FONT_NAME: source = &fontName; break;
+	case PT_WHEEL_FILE: source = &wheelFilePath; break;
 	default: break;
 	}
 	textReturn[ 0 ] = '\0';

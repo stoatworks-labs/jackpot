@@ -19,7 +19,7 @@ std::vector< Program > Programs()
 	return {
 		{ "slots", quad, Assemble( { kVersion, kCommon, kText, kSlots, kSlotsMain } ) },
 		{ "roulette", quad, Assemble( { kVersion, kCommon, kText, kScene, kRoulette, kRouletteMain } ) },
-		{ "wheel", quad, Assemble( { kVersion, kCommon, kText, kWheel } ) },
+		{ "wheel", quad, Assemble( { kVersion, kCommon, kText, kWheel, kWheelMain } ) },
 		{ "craps", quad, Assemble( { kVersion, kCommon, kText, kScene, kCraps, kCrapsMain } ) },
 		{ "lottery", quad, Assemble( { kVersion, kCommon, kText, kScene, kLottery, kLotteryMain } ) },
 		{ "blank", quad, Assemble( { kVersion, kCommon, kBlank } ) },
@@ -1406,6 +1406,133 @@ float sdStar5( vec2 p, float r, float rf )
 	return length( p - ba * h ) * sign( p.y * ba.x - p.x * ba.y );
 }
 
+//-- jackpot#1: a wheel of Segments, its labels from a texture ------------------
+//= mirrored in WheelFace.h (Style, kLead) and Jackpot.cpp (UploadLabels).
+const int STYLE_BIG6_JOKER = 5;
+const int STYLE_JACKPOT    = 6;
+const int STYLE_JOKER      = 7;
+const float LEAD           = 1.12;
+const int LABEL_HEAD       = 2;    //texels of a row before its characters
+
+uniform int   Custom;          //0: v0.1.1's Big Six (Layout, the spans); 1: Segments from Labels
+uniform int   Segments;        //the painted segments
+uniform int   PegCount;        //pegs round the wheel: Segments x round( 54 / Segments )
+uniform sampler2D Labels;      //row j: (style, symbol, characters, across), (height, anchor, ink left, ink width), glyphs
+uniform sampler2D Symbols;     //the reel symbols (SymbolArt), for the emoji
+uniform vec2  SymbolsSize;
+
+vec3 styleColour( int s )
+{
+	if( s == 0 ) return valueColour( 1 );
+	if( s == 1 ) return valueColour( 2 );
+	if( s == 2 ) return valueColour( 5 );
+	if( s == 3 ) return valueColour( 10 );
+	if( s == 4 ) return valueColour( 20 );
+	if( s == STYLE_JOKER ) return toLinear( vec3( 0.62, 0.04, 0.06 ) );
+	return valueColour( 40 );
+}
+
+//Dark print on the light cards (the $1 and $20 colours), gold on the marked
+//ones, white on the rest: v0.1.1's rule.
+vec3 stylePrint( int s, vec3 gold )
+{
+	if( s >= STYLE_BIG6_JOKER )
+		return gold;
+	return ( s == 0 || s == 4 ) ? toLinear( vec3( 0.08, 0.05, 0.03 ) ) : vec3( 0.97 );
+}
+
+int labelGlyph( int j, int k )
+{
+	return int( texelFetch( Labels, ivec2( LABEL_HEAD + k, j ), 0 ).x );
+}
+
+//Segment j's label at q (metres; x out along the segment's middle, y round),
+//as a distance in metres, positive inside.
+float labelDistance( int j, vec2 q )
+{
+	vec4 head = texelFetch( Labels, ivec2( 0, j ), 0 );
+	vec4 size = texelFetch( Labels, ivec2( 1, j ), 0 );
+	int count = int( head.z );
+	float h   = size.x;
+	if( count <= 0 || h <= 0.0 || head.y > 0.5 )
+		return -1.0;
+	//The text's frame: x across (left to right with the segment at the top), y out.
+	vec2 t = vec2( -q.y, q.x - size.y );
+	if( head.w < 0.5 )
+	{
+		//Stacked, as stackedDistance: a row a character, down from the anchor.
+		float best = -1.0;
+		int row    = int( floor( -t.y / ( h * LEAD ) ) );
+		for( int k = row - 1; k <= row + 1; ++k )
+		{
+			if( k < 0 || k >= count )
+				continue;
+			int g = labelGlyph( j, k );
+			if( g < 0 )
+				continue;
+			float cy = -( float( k ) + 0.5 ) * h * LEAD;
+			vec2 gq  = vec2( t.x / h + 0.5 * ( GlyphBox[ g ].z + GlyphBox[ g ].w ), ( t.y - cy ) / h + 0.5 );
+			best     = max( best, glyphDistance( g, gq ) * h );
+		}
+		return best;
+	}
+	//Across: one line, its ink centred on the anchor, as textDistance.
+	vec2 local = vec2( t.x / h + 0.5 * size.w + size.z, t.y / h + 0.5 );
+	if( local.x < size.z - 0.3 || local.x > size.z + size.w + 0.3 || local.y < -0.4 || local.y > 1.4 )
+		return -1.0;
+	float best = -1.0;
+	float pen  = 0.0;
+	for( int i = 0; i < count; ++i )
+	{
+		int g = labelGlyph( j, i );
+		if( g < 0 )
+		{
+			pen += SPACE;
+			continue;
+		}
+		float x = local.x - pen;
+		if( x > GlyphBox[ g ].z - 0.3 && x < GlyphBox[ g ].w + 0.3 )
+			best = max( best, glyphDistance( g, vec2( x, local.y ) ) );
+		pen += GlyphAdv[ g ];
+	}
+	return best * h;
+}
+
+//Segment j's reel symbol at q, premultiplied linear; nothing is zero.
+vec4 labelSymbol( int j, vec2 q, float mpx )
+{
+	vec4 head = texelFetch( Labels, ivec2( 0, j ), 0 );
+	int s     = int( head.y + 0.5 );
+	if( s <= 0 )
+		return vec4( 0.0 );
+	vec4 size = texelFetch( Labels, ivec2( 1, j ), 0 );
+	float a   = size.x;
+	vec2 tile = vec2( -q.y, q.x - size.y ) / ( 2.0 * a ) + 0.5;
+	if( tile.x < 0.0 || tile.x > 1.0 || tile.y < 0.0 || tile.y > 1.0 )
+		return vec4( 0.0 );
+	vec2 cell = vec2( float( s % 4 ), float( s / 4 ) );
+	float lod = log2( max( SymbolsSize.x * 0.25 / ( 2.0 * a ) * mpx, 1.0 ) );
+	vec4 c    = textureLod( Symbols, ( cell + clamp( tile, 0.004, 0.996 ) ) * 0.25, lod );
+	vec3 straight = c.a > 0.0 ? c.rgb / c.a : vec3( 0.0 );
+	return vec4( toLinear( straight ) * c.a, c.a );
+}
+
+//1 where segment j's label or symbol has ink at q's pixel centre (jptest).
+float labelInk( int j, vec2 q, float mpx )
+{
+	return max( step( 0.0, labelDistance( j, q ) ), step( 0.5, labelSymbol( j, q, mpx ).a ) );
+}
+
+//The point m (metres) in segment j's frame, k being j unwrapped.
+vec2 segmentFrame( vec2 m, float k, float seg )
+{
+	float ac = WheelAngle + ( k + 0.5 ) * seg;
+	vec2 er  = vec2( cos( ac ), sin( ac ) );
+	return vec2( dot( m, er ), dot( m, vec2( -er.y, er.x ) ) );
+}
+)";
+
+const char* const kWheelMain = R"(
 vec4 drawWheel( vec2 p, float px )
 {
 	vec4 col = vec4( 0.0 );
@@ -1440,58 +1567,127 @@ vec4 drawWheel( vec2 p, float px )
 		col.rgb  += warm * on * 0.35 * exp( -d * d / 0.0016 ) * col.a;
 	}
 
-	//-- the face: 54 segments -------------------------------------------------------
-	float face = r - 0.89;
-	if( face < mpx * 2.0 )
+	if( Custom == 0 )
 	{
-		float seg = 2.0 * PI / float( SEGMENTS );
-		float u   = ( atan( m.y, m.x ) - WheelAngle ) / seg;
-		float k   = floor( u );
-		float f   = u - k;
-		int j     = int( mod( k, float( SEGMENTS ) ) );
-		int v     = Layout[ j ];
-		vec3 c    = valueColour( v );
-		//The id picture (jptest): the segment and its value, nothing else.
-		if( TestFlat == 2 )
-			return layer( col, vec3( float( j ) / 64.0, float( v ) / 64.0, 0.25 ), cover( face, mpx ) );
-		//The segment's frame: x outward along its middle, y round.
-		float ac  = WheelAngle + ( k + 0.5 ) * seg;
-		vec2 er   = vec2( cos( ac ), sin( ac ) );
-		vec2 et   = vec2( -er.y, er.x );
-		vec2 q    = vec2( dot( m, er ), dot( m, et ) );
-		//Gold dividers between segments, and a gold band inside the pegs.
-		float div = ( 0.5 - abs( f - 0.5 ) ) * seg * r - 0.0035;
-		float bandO = abs( r - 0.80 ) - 0.006;
-		float bandI = abs( r - 0.28 ) - 0.006;
-		vec3 gold = toLinear( vec3( 0.95, 0.76, 0.3 ) );
-		if( v == 40 || v == 45 )
+		//-- the face: 54 segments -------------------------------------------------------
+		float face = r - 0.89;
+		if( face < mpx * 2.0 )
 		{
-			//A star, pointing outward (it is symmetric across its axis).
-			float star = sdStar5( vec2( q.y, q.x - 0.36 ), 0.035, 0.45 );
-			c = mix( c, gold, cover( star, mpx ) );
+			float seg = 2.0 * PI / float( SEGMENTS );
+			float u   = ( atan( m.y, m.x ) - WheelAngle ) / seg;
+			float k   = floor( u );
+			float f   = u - k;
+			int j     = int( mod( k, float( SEGMENTS ) ) );
+			int v     = Layout[ j ];
+			vec3 c    = valueColour( v );
+			//The id picture (jptest): the segment and its value, nothing else.
+			if( TestFlat == 2 )
+				return layer( col, vec3( float( j ) / 64.0, float( v ) / 64.0, 0.25 ), cover( face, mpx ) );
+			//The segment's frame: x outward along its middle, y round.
+			float ac  = WheelAngle + ( k + 0.5 ) * seg;
+			vec2 er   = vec2( cos( ac ), sin( ac ) );
+			vec2 et   = vec2( -er.y, er.x );
+			vec2 q    = vec2( dot( m, er ), dot( m, et ) );
+			//Gold dividers between segments, and a gold band inside the pegs.
+			float div = ( 0.5 - abs( f - 0.5 ) ) * seg * r - 0.0035;
+			float bandO = abs( r - 0.80 ) - 0.006;
+			float bandI = abs( r - 0.28 ) - 0.006;
+			vec3 gold = toLinear( vec3( 0.95, 0.76, 0.3 ) );
+			if( v == 40 || v == 45 )
+			{
+				//A star, pointing outward (it is symmetric across its axis).
+				float star = sdStar5( vec2( q.y, q.x - 0.36 ), 0.035, 0.45 );
+				c = mix( c, gold, cover( star, mpx ) );
+			}
+			//The value, one character under another from just inside the band,
+			//each upright when its segment is at the top.
+			float ink = stackedDistance( valueSpan( v ), vec2( -q.y, q.x - ( v >= 40 ? 0.775 : 0.775 ) ), v >= 40 ? 0.05 : 0.07, 1.12 );
+			//Dark print on the light cards ($1, $20), white on the rest.
+			vec3 print = v >= 40 ? gold : ( v == 1 || v == 20 ) ? toLinear( vec3( 0.08, 0.05, 0.03 ) ) : vec3( 0.97 );
+			c = mix( c, print, cover( -ink, mpx ) );
+			c = mix( c, gold, max( cover( div, mpx ), max( cover( bandO, mpx ), cover( bandI, mpx ) ) ) );
+			if( j == Highlight && TestFlat == 0 )
+				c *= 1.0 + 0.7 * Lights * ( 0.6 + 0.4 * sin( Time * 7.0 ) );
+			if( TestFlat == 0 )
+			{
+				//A gentle dome of light across the face.
+				c *= 0.75 + 0.35 * max( dot( normalize( vec3( m * 0.35, 1.0 ) ), L2 ), 0.0 );
+			}
+			col = layer( col, c, cover( face, mpx ) );
 		}
-		//The value, one character under another from just inside the band,
-		//each upright when its segment is at the top.
-		float ink = stackedDistance( valueSpan( v ), vec2( -q.y, q.x - ( v >= 40 ? 0.775 : 0.775 ) ), v >= 40 ? 0.05 : 0.07, 1.12 );
-		//Dark print on the light cards ($1, $20), white on the rest.
-		vec3 print = v >= 40 ? gold : ( v == 1 || v == 20 ) ? toLinear( vec3( 0.08, 0.05, 0.03 ) ) : vec3( 0.97 );
-		c = mix( c, print, cover( -ink, mpx ) );
-		c = mix( c, gold, max( cover( div, mpx ), max( cover( bandO, mpx ), cover( bandI, mpx ) ) ) );
-		if( j == Highlight && TestFlat == 0 )
-			c *= 1.0 + 0.7 * Lights * ( 0.6 + 0.4 * sin( Time * 7.0 ) );
-		if( TestFlat == 0 )
+	}
+	else
+	{
+		//-- jackpot#1: Segments segments, the labels from the texture ------------
+		float face = r - 0.89;
+		if( face < mpx * 2.0 )
 		{
-			//A gentle dome of light across the face.
-			c *= 0.75 + 0.35 * max( dot( normalize( vec3( m * 0.35, 1.0 ) ), L2 ), 0.0 );
+			float seg = 2.0 * PI / float( Segments );
+			float u   = ( atan( m.y, m.x ) - WheelAngle ) / seg;
+			float k   = floor( u );
+			float f   = u - k;
+			int j     = int( mod( k, float( Segments ) ) );
+			int style = int( texelFetch( Labels, ivec2( 0, j ), 0 ).x + 0.5 );
+			//The id picture (jptest): the segment and its style.
+			if( TestFlat == 2 )
+				return layer( col, vec3( float( j ) / 64.0, float( style ) / 64.0, 0.25 ), cover( face, mpx ) );
+			vec2 q = segmentFrame( m, k, seg );
+			//jptest --wheel-geometry: R where this segment's label has ink, G where
+			//a neighbour's reaches in (which it never may), B the segment.
+			if( TestFlat == 3 )
+			{
+				float spill = max( labelInk( int( mod( k - 1.0, float( Segments ) ) ), segmentFrame( m, k - 1.0, seg ), mpx ),
+				                   labelInk( int( mod( k + 1.0, float( Segments ) ) ), segmentFrame( m, k + 1.0, seg ), mpx ) );
+				return face <= 0.0 ? vec4( labelInk( j, q, mpx ), spill, float( j + 1 ) / 64.0, 1.0 ) : vec4( 0.0 );
+			}
+			vec3 c      = styleColour( style );
+			float div   = ( 0.5 - abs( f - 0.5 ) ) * seg * r - 0.0035;
+			float bandO = abs( r - 0.80 ) - 0.006;
+			float bandI = abs( r - 0.28 ) - 0.006;
+			vec3 gold   = toLinear( vec3( 0.95, 0.76, 0.3 ) );
+			if( style >= STYLE_BIG6_JOKER )
+			{
+				float star = sdStar5( vec2( q.y, q.x - 0.36 ), 0.035, 0.45 );
+				c = mix( c, gold, cover( star, mpx ) );
+			}
+			float ink = labelDistance( j, q );
+			c = mix( c, stylePrint( style, gold ), cover( -ink, mpx ) );
+			vec4 symbol = labelSymbol( j, q, mpx );
+			c = c * ( 1.0 - symbol.a ) + symbol.rgb;
+			c = mix( c, gold, max( cover( div, mpx ), max( cover( bandO, mpx ), cover( bandI, mpx ) ) ) );
+			if( j == Highlight && TestFlat == 0 )
+				c *= 1.0 + 0.7 * Lights * ( 0.6 + 0.4 * sin( Time * 7.0 ) );
+			if( TestFlat == 0 )
+				c *= 0.75 + 0.35 * max( dot( normalize( vec3( m * 0.35, 1.0 ) ), L2 ), 0.0 );
+			col = layer( col, c, cover( face, mpx ) );
 		}
-		col = layer( col, c, cover( face, mpx ) );
+		if( TestFlat == 3 )
+			return vec4( 0.0 );
 	}
 	if( TestFlat == 2 )
 		return col;
 
 	//-- the pegs: brass studs between the segments, at PEG_R --------------------------
+	if( Custom == 0 )
 	{
 		float seg = 2.0 * PI / float( SEGMENTS );
+		float u   = ( atan( m.y, m.x ) - WheelAngle ) / seg;
+		float k   = floor( u + 0.5 );
+		float a   = WheelAngle + k * seg;
+		vec2 c    = PEG_R * vec2( cos( a ), sin( a ) );
+		vec2 d    = ( m - c ) / ( PEG_SIZE * 1.6 );
+		float peg = length( m - c ) - PEG_SIZE * 1.6;
+		vec3 n    = vec3( d, sqrt( max( 0.0, 1.0 - dot( d, d ) ) ) );
+		vec3 brass = toLinear( vec3( 0.9, 0.75, 0.4 ) );
+		vec3 pc   = TestFlat == 1 ? brass : brass * ( 0.3 + 0.8 * max( dot( n, L2 ), 0.0 ) ) + vec3( 0.8 ) * pow( max( dot( n, normalize( L2 + vec3( 0.0, 0.0, 1.0 ) ) ), 0.0 ), 30.0 );
+		col = layer( col, vec3( 0.0 ), cover( peg - 0.002, mpx ) * 0.35 );
+		col = layer( col, pc, cover( peg, mpx ) );
+	}
+
+	else
+	{
+		//m to a segment: one at every divider, m - 1 more inside (jackpot#1).
+		float seg = 2.0 * PI / float( PegCount );
 		float u   = ( atan( m.y, m.x ) - WheelAngle ) / seg;
 		float k   = floor( u + 0.5 );
 		float a   = WheelAngle + k * seg;
@@ -1541,7 +1737,7 @@ void main()
 {
 	vec2 p   = canvasPoint( gl_FragCoord.xy );
 	vec4 col = drawWheel( p, canvasPixel() );
-	if( TestFlat == 2 )
+	if( TestFlat == 2 || TestFlat == 3 )
 	{
 		fragColour = col;
 		return;

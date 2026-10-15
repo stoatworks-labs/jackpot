@@ -19,7 +19,7 @@ constexpr double kContactK    = 2.0e5;  ///< N/m
 constexpr double kContactC    = 40.0;   ///< N s/m
 constexpr double kMaxSim      = 40.0;
 constexpr double kPull        = 1.0;    ///< s: the operator's pull before letting go
-constexpr double kSegment     = 2.0 * kPi / kSegments;
+constexpr double kSegment     = 2.0 * kPi / kSegments;///< one of the Big Six's 54
 
 double Wrap( double a )
 {
@@ -89,15 +89,16 @@ std::string Name( int value )
 	return "$" + std::to_string( value );
 }
 
-double ClearingDeflection( double angle, double direction )
+double ClearingDeflection( double angle, double direction, int pegs )
 {
 	//The pegs near the top, and the smallest swing (in the direction the
 	//pegs are travelling) that keeps the clapper off all of them.
+	const double pitch = 2.0 * kPi / pegs;
 	auto clear = [ & ]( double psi ) {
-		for( int j = 0; j < kSegments; ++j )
+		for( int j = 0; j < pegs; ++j )
 		{
-			const double a = angle + j * kSegment;
-			if( std::fabs( std::remainder( a - 0.5 * kPi, 2.0 * kPi ) ) > 3.0 * kSegment )
+			const double a = angle + j * pitch;
+			if( std::fabs( std::remainder( a - 0.5 * kPi, 2.0 * kPi ) ) > 3.0 * pitch )
 				continue;
 			V2 q;
 			if( ClapperDistance( psi, { kPegRadius * std::cos( a ), kPegRadius * std::sin( a ) }, q ) < kPegSize + kClapperHalf )
@@ -125,7 +126,11 @@ double BearingWorkPerSegment()
 Simulation Simulate( const Release& r, const std::atomic< bool >* cancel )
 {
 	Simulation sim;
-	//The angle in segments: whole + phase, phase in [0, 1). Only the phase
+	//One peg's angle. With 54 pegs this is the Big Six's segment, computed
+	//as v0.1.1 computed it (the same division), so its paths are its paths.
+	const double pitch = 2.0 * kPi / r.pegs;
+	const int pegs     = r.pegs;
+	//The angle in pegs: whole + phase, phase in [0, 1). Only the phase
 	//places the pegs, so `turns` cannot change a single step.
 	long whole   = r.turns;
 	double phase = r.phase + r.pegTurn;
@@ -145,8 +150,8 @@ Simulation Simulate( const Release& r, const std::atomic< bool >* cancel )
 	const double c = 2.0 * kClapperZeta * std::sqrt( k * kClapperInertia );
 	sim.startEnergy = 0.5 * kWheelInertia * omega * omega;
 
-	//The peg at the top line, counted in whole segments from the phase.
-	const double top = 0.5 * kPi / kSegment;
+	//The peg at the top line, counted in whole pegs from the phase.
+	const double top = 0.5 * kPi / pitch;
 	auto topPeg      = [ & ]() { return static_cast< long >( std::floor( top - phase ) ) - whole; };
 	double t = 0.0, nextKey = 0.0, still = 0.0;
 	double lastCrossEnergy = sim.startEnergy;
@@ -159,14 +164,14 @@ Simulation Simulate( const Release& r, const std::atomic< bool >* cancel )
 			return {};
 		while( t >= nextKey - 1e-12 )
 		{
-			sim.angle.push_back( ( static_cast< double >( whole ) + phase ) * kSegment );
+			sim.angle.push_back( ( static_cast< double >( whole ) + phase ) * pitch );
 			sim.phase.push_back( phase );
 			sim.whole.push_back( whole );
 			sim.clapper.push_back( psi );
 			nextKey += 1.0 / Simulation::kKeyRate;
 		}
 
-		const double theta = phase * kSegment;
+		const double theta = phase * pitch;
 		//The leather: full stiffness while a peg bends it, a third of it while
 		//it straightens against one (hysteresis). Elastic both ways, a wheel too
 		//slow to clear a peg was handed back all it had put in and rocked back
@@ -174,11 +179,11 @@ Simulation Simulate( const Release& r, const std::atomic< bool >* cancel )
 		const bool unloading = touching && psi * psiRate < 0.0;
 		double torqueWheel = 0.0, torqueClapper = -k * psi * ( unloading ? kUnload : 1.0 ) - c * psiRate;
 		touching = false;
-		//Only the pegs within three segments of the top can reach the clapper.
-		const int nearest = static_cast< int >( std::lround( ( 0.5 * kPi - theta ) / kSegment ) );
+		//Only the pegs within three pitches of the top can reach the clapper.
+		const int nearest = static_cast< int >( std::lround( ( 0.5 * kPi - theta ) / pitch ) );
 		for( int dj = -3; dj <= 3; ++dj )
 		{
-			const double a = theta + ( nearest + dj ) * kSegment;
+			const double a = theta + ( nearest + dj ) * pitch;
 			const V2 p     = { kPegRadius * std::cos( a ), kPegRadius * std::sin( a ) };
 			V2 q;
 			const double d     = ClapperDistance( psi, p, q );
@@ -211,9 +216,9 @@ Simulation Simulate( const Release& r, const std::atomic< bool >* cancel )
 				++sim.reversals;
 		}
 		psiRate += torqueClapper / kClapperInertia * kDt;
-		phase += omega * kDt / kSegment;
+		phase += omega * kDt / pitch;
 		//Exact for a phase in [1, 2) or [-1, 0) (Sterbenz): no rounding moves
-		//between the phase and the whole segments.
+		//between the phase and the whole pegs.
 		if( phase >= 1.0 )
 		{
 			phase -= 1.0;
@@ -246,10 +251,10 @@ Simulation Simulate( const Release& r, const std::atomic< bool >* cancel )
 		{
 			sim.settled = true;
 			sim.natural = t - 0.4;
-			//The segment under the clapper in the paint's frame: the pegs' own
+			//The gap under the clapper in the paint's frame: the pegs' own
 			//turn (the negative control's) taken back out.
 			const long under = static_cast< long >( std::floor( top - phase + r.pegTurn ) ) - whole;
-			sim.segment      = static_cast< int >( ( ( under % kSegments ) + kSegments ) % kSegments );
+			sim.gap          = static_cast< int >( ( ( under % pegs ) + pegs ) % pegs );
 			const size_t keep = static_cast< size_t >( std::ceil( sim.natural * Simulation::kKeyRate ) ) + 1;
 			if( sim.angle.size() > keep )
 			{
@@ -265,48 +270,102 @@ Simulation Simulate( const Release& r, const std::atomic< bool >* cancel )
 	return sim;
 }
 
-int Wanted( const Request& r )
+namespace
 {
-	const std::vector< int >& layout = Layout();
-	Stream s( Hash( r.seed, r.play, 0x51c5u ) );
-	auto pick = [ & ]( auto accept ) {
-		std::vector< int > options;
-		for( int i = 0; i < kSegments; ++i )
-			if( accept( i, layout[ static_cast< size_t >( i ) ] ) )
-				options.push_back( i );
-		return options.empty() ? s.Below( kSegments ) : options[ static_cast< size_t >( s.Below( static_cast< int >( options.size() ) ) ) ];
-	};
-	//The bet, snapped to a value the wheel has.
+/// The bet snapped to the nearest value this wheel has (v0.1.1: of the
+/// seven; a smaller Big Six can have fewer).
+int SnapBet( const Face& face, int bet )
+{
 	const int values[] = { 1, 2, 5, 10, 20, 40, 45 };
-	int bet            = values[ 0 ];
+	int best           = -1;
 	for( int v : values )
-		if( std::abs( v - r.bet ) < std::abs( bet - r.bet ) )
-			bet = v;
-	auto top = []( int v ) { return v == 40 || v == 45; };
-	switch( r.result )
 	{
-	case Result::Random: return r.biasedDraw ? s.Below( kSegments - 1 ) : s.Below( kSegments );
-	case Result::Jackpot: return pick( [ & ]( int, int v ) { return top( v ); } );
-	case Result::NearMiss:
-		return pick( [ & ]( int i, int v ) {
-			const int a = layout[ static_cast< size_t >( ( i + 1 ) % kSegments ) ], b = layout[ static_cast< size_t >( ( i + kSegments - 1 ) % kSegments ) ];
-			return !top( v ) && ( top( a ) || top( b ) );
-		} );
-	case Result::Lose: return pick( [ & ]( int, int v ) { return v != bet && !top( v ); } );
-	default: return pick( [ & ]( int, int v ) { return v == bet; } );
+		bool there = false;
+		for( const Segment& s : face.segment )
+			there = there || s.value == v;
+		if( there && ( best < 0 || std::abs( v - bet ) < std::abs( best - bet ) ) )
+			best = v;
 	}
+	return best < 0 ? values[ 0 ] : best;
 }
 
-Plan MakePlan( const Request& r, const std::atomic< bool >* cancel )
+bool BigSixTop( int v )
+{
+	return v == 40 || v == 45;
+}
+} // namespace
+
+int Wanted( const Request& r, bool* fellBack )
+{
+	const Face& face = r.face ? *r.face : *DefaultFace();
+	const int n      = face.Count();
+	Stream s( Hash( r.seed, r.play, 0x51c5u ) );
+	bool fell  = false;
+	auto pick  = [ & ]( auto accept ) {
+		std::vector< int > options;
+		for( int i = 0; i < n; ++i )
+			if( accept( i ) )
+				options.push_back( i );
+		fell = options.empty();
+		return options.empty() ? s.Below( n ) : options[ static_cast< size_t >( s.Below( static_cast< int >( options.size() ) ) ) ];
+	};
+	auto at = [ & ]( int i ) -> const Segment& { return face.segment[ static_cast< size_t >( ( ( i % n ) + n ) % n ) ]; };
+	int wanted = 0;
+	if( r.result == Result::Random )
+		wanted = r.biasedDraw ? s.Below( n - 1 ) : s.Below( n );
+	else if( !face.fromFile )
+	{
+		//The Big Six (v0.1.1's rules, against the values this wheel has).
+		const int bet = SnapBet( face, r.bet );
+		switch( r.result )
+		{
+		case Result::Jackpot: wanted = pick( [ & ]( int i ) { return BigSixTop( at( i ).value ); } ); break;
+		case Result::NearMiss:
+			wanted = pick( [ & ]( int i ) { return !BigSixTop( at( i ).value ) && ( BigSixTop( at( i + 1 ).value ) || BigSixTop( at( i - 1 ).value ) ); } );
+			break;
+		case Result::Lose: wanted = pick( [ & ]( int i ) { return at( i ).value != bet && !BigSixTop( at( i ).value ); } ); break;
+		default: wanted = pick( [ & ]( int i ) { return at( i ).value == bet; } ); break;
+		}
+	}
+	else
+	{
+		//A file: only the marked segments win, '*' is the top prize, and
+		//Fixed Number is a line of the file.
+		auto marked  = [ & ]( int i ) { return at( i ).mark != Mark::None; };
+		auto jackpot = [ & ]( int i ) { return at( i ).mark == Mark::Jackpot; };
+		switch( r.result )
+		{
+		case Result::Win: wanted = pick( marked ); break;
+		case Result::Jackpot: wanted = pick( jackpot ); break;
+		case Result::NearMiss: wanted = pick( [ & ]( int i ) { return !marked( i ) && ( jackpot( i + 1 ) || jackpot( i - 1 ) ); } ); break;
+		case Result::Lose: wanted = pick( [ & ]( int i ) { return !marked( i ); } ); break;
+		default: wanted = pick( [ & ]( int i ) { return at( i ).line == r.bet; } ); break;
+		}
+	}
+	if( fellBack != nullptr )
+		*fellBack = fell;
+	return wanted;
+}
+
+Plan MakePlan( const Request& request, const std::atomic< bool >* cancel )
 {
 	const auto start = std::chrono::steady_clock::now();
+	Request r = request;
+	if( !r.face )
+		r.face = DefaultFace();
+	const Face& face = *r.face;
+	const int n      = face.Count();
+	const int m      = r.onePegPerSegment ? 1 : PegsPerSegment( n );
 	Plan plan;
-	plan.request = r;
-	plan.wanted  = Wanted( r );
-	plan.pull    = kPull;
+	plan.request  = r;
+	plan.segments = n;
+	plan.pegsPer  = m;
+	plan.wanted   = Wanted( r, &plan.fellBack );
+	plan.pull     = kPull;
 
 	Stream s( Hash( r.seed, r.play, 0x77e1u ) );
 	Release release;
+	release.pegs      = n * m;
 	release.phase     = s.Uniform();
 	release.stiffness = r.stiffness;
 	const double want = std::max( 1.0, r.duration - kPull );
@@ -345,8 +404,12 @@ Plan MakePlan( const Request& r, const std::atomic< bool >* cancel )
 	plan.release  = release;
 	plan.sim      = best;
 
-	plan.shift       = r.noShift ? 0 : ( ( best.segment - plan.wanted ) % kSegments + kSegments ) % kSegments;
-	plan.paintOffset = plan.shift * kSegment;
+	//The physics' gap is in pegs; the segment it is in is the gap divided by
+	//m, and the paint turns by whole segments (m whole pegs each).
+	const int landed = best.gap / m;
+	const double segmentAngle = 2.0 * kPi / n;
+	plan.shift       = r.noShift ? 0 : ( ( landed - plan.wanted ) % n + n ) % n;
+	plan.paintOffset = plan.shift * segmentAngle;
 	plan.paintFrom   = r.paintNow;
 	//Where the paint must be when the wheel is let go, a pull of at least a
 	//quarter turn on from where it stands.
@@ -356,30 +419,44 @@ Plan MakePlan( const Request& r, const std::atomic< bool >* cancel )
 	plan.paintAtRelease = r.paintNow + delta;
 	plan.playback       = MakePlayback( kPull + ( best.settled ? best.natural : 0.0 ), r.duration, r.noWarp );
 
-	const int shown = Layout()[ static_cast< size_t >( ( ( best.segment - plan.shift ) % kSegments + kSegments ) % kSegments ) ];
-	plan.outcome.value   = shown;
-	plan.outcome.jackpot = shown == 40 || shown == 45;
-	const int values[]   = { 1, 2, 5, 10, 20, 40, 45 };
-	int bet              = values[ 0 ];
-	for( int v : values )
-		if( std::abs( v - r.bet ) < std::abs( bet - r.bet ) )
-			bet = v;
-	plan.outcome.win = shown == bet || plan.outcome.jackpot;
+	const int i          = plan.Shown();
+	const Segment& shown = face.segment[ static_cast< size_t >( i ) ];
+	const Segment& after = face.segment[ static_cast< size_t >( ( i + 1 ) % n ) ];
+	const Segment& below = face.segment[ static_cast< size_t >( ( i + n - 1 ) % n ) ];
+	if( !face.fromFile )
 	{
-		const int i = ( ( best.segment - plan.shift ) % kSegments + kSegments ) % kSegments;
-		const int a = Layout()[ static_cast< size_t >( ( i + 1 ) % kSegments ) ], b = Layout()[ static_cast< size_t >( ( i + kSegments - 1 ) % kSegments ) ];
-		plan.outcome.nearMiss = !plan.outcome.jackpot && ( a == 40 || a == 45 || b == 40 || b == 45 );
+		const int bet         = SnapBet( face, r.bet );
+		plan.outcome.value    = shown.value;
+		plan.outcome.jackpot  = BigSixTop( shown.value );
+		plan.outcome.win      = shown.value == bet || plan.outcome.jackpot;
+		plan.outcome.nearMiss = !plan.outcome.jackpot && ( BigSixTop( after.value ) || BigSixTop( below.value ) );
+		plan.outcome.payout   = plan.outcome.win ? shown.value : 0;
+		plan.outcome.text     = Name( shown.value );
 	}
-	plan.outcome.payout = plan.outcome.win ? shown : 0;
-	plan.outcome.text   = Name( shown );
+	else
+	{
+		//Only the marked segments win: a file with no markers never does.
+		plan.outcome.value    = shown.line;
+		plan.outcome.jackpot  = shown.mark == Mark::Jackpot;
+		plan.outcome.win      = shown.mark != Mark::None || r.markedWinAny;
+		plan.outcome.nearMiss = !plan.outcome.win && ( after.mark == Mark::Jackpot || below.mark == Mark::Jackpot );
+		plan.outcome.payout   = plan.outcome.win ? 1 : 0;
+		plan.outcome.text     = shown.board;
+	}
 	plan.ms = std::chrono::duration< double, std::milli >( std::chrono::steady_clock::now() - start ).count();
 	return plan;
 }
 
-Plan MakeRest( const Request& r )
+Plan MakeRest( const Request& request )
 {
+	Request r = request;
+	if( !r.face )
+		r.face = DefaultFace();
 	Plan plan;
 	plan.request   = r;
+	plan.segments  = r.face->Count();
+	plan.pegsPer   = PegsPerSegment( plan.segments );
+	plan.release.pegs = plan.segments * plan.pegsPer;
 	plan.idle      = true;
 	plan.paintFrom = r.paintNow;
 	plan.playback  = MakePlayback( 0.0, 0.0 );
@@ -407,13 +484,18 @@ double Plan::PaintAngle( double seconds ) const
 	return physical + ( paintAtRelease - release.Angle() );
 }
 
+int Plan::Shown() const
+{
+	return ( ( sim.gap / pegsPer - shift ) % segments + segments ) % segments;
+}
+
 double Plan::Clapper( double seconds ) const
 {
 	if( idle )
 		return 0.0;
 	const double simT = playback.SimTime( seconds );
 	if( simT < pull || sim.clapper.empty() )
-		return ClearingDeflection( PaintAngle( seconds ) - paintOffset, 1.0 );
+		return ClearingDeflection( PaintAngle( seconds ) - paintOffset, 1.0, release.pegs );
 	const double f    = ( simT - pull ) * Simulation::kKeyRate;
 	const size_t last = sim.clapper.size() - 1;
 	if( f >= static_cast< double >( last ) )

@@ -160,7 +160,8 @@ step "Shaders through this Mac's driver"
 step "Checks"
 #---------------------------------------------------------------------------
 # Every claim the README makes, in the order the README makes them.
-for check in slots nearmiss blur slots-readback roulette roulette-readback wheel wheel-readback craps lottery \
+for check in slots nearmiss blur slots-readback roulette roulette-readback wheel wheel-readback \
+             wheel-file wheel-draw wheel-custom wheel-geometry craps lottery \
              shower pile duration defaults names determinism over-check resize fonts state; do
 	"$BUILD/jptest" --$check || fail "jptest --$check"
 done

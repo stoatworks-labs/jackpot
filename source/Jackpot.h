@@ -133,6 +133,11 @@ public:
 		bool biasedDraw     = false;
 		double restitution  = -1.0;
 		double reelOffset   = 0.0;///< stops added to every reel as drawn (--slots-readback's negative)
+		bool noLabelShrink  = false;///< a wheel's labels at their largest (--wheel-geometry)
+		int segmentsOffset  = 0;    ///< added to the Segments the shader is told (--wheel-geometry)
+		bool drawPerSpin    = false;///< the file's Random draw redone every play (--wheel-draw)
+		bool markedWinAny   = false;///< a file's every segment wins (--wheel-custom)
+		bool onePegPerSegment = false;///< P = N, not about 54 (--wheel-custom)
 	};
 	TestFlags& Flags()
 	{
@@ -181,6 +186,31 @@ public:
 	{
 		transport.SetBeatInfo( bpm, barPhase );
 	}
+	/// The plugin's clock and requests without a GL context: what a frame
+	/// does before it draws (the offline checks of the Wheel File).
+	void TickForTest( double dt )
+	{
+		Tick( dt );
+	}
+	/// The money wheel's face as it stands now (the next play's).
+	std::shared_ptr< const wheel::Face > WheelFaceForTest() const
+	{
+		return wheelFace;
+	}
+	/// What the last Wheel File load said: empty, or why it fell back.
+	std::string WheelFileStatus() const
+	{
+		return wheelFileStatus;
+	}
+	bool WheelFileLoaded() const
+	{
+		return wheelFileOk;
+	}
+	/// The label fits last uploaded (--wheel-geometry reports the sizes).
+	const std::vector< wheel::LabelFit >& LabelFitsForTest() const
+	{
+		return labelFits;
+	}
 
 private:
 	void UpdateClock();
@@ -192,6 +222,8 @@ private:
 	void ResolveFont();
 	void UploadAtlas();
 	void UploadSymbols();
+	void UpdateWheelFace();
+	void UploadLabels( const std::shared_ptr< const wheel::Face >& face );
 	void ReapAbandoned( bool wait );
 
 	slots::Request SlotsRequest() const;
@@ -217,7 +249,7 @@ private:
 	ffglex::FFGLShader programs[ static_cast< int >( Game::Count ) ];
 	ffglex::FFGLShader showerProgram, compositeProgram;
 	ffglex::FFGLScreenQuad quad;
-	GLuint atlasTexture = 0, symbolTexture = 0, blankTexture = 0, ballTexture = 0;
+	GLuint atlasTexture = 0, symbolTexture = 0, blankTexture = 0, ballTexture = 0, labelTexture = 0;
 	GLuint showerFbo = 0, showerColour = 0, showerDepth = 0, showerVao = 0, showerVbo = 0, quadVbo = 0;
 	int showerWidth = 0, showerHeight = 0;
 
@@ -276,6 +308,32 @@ private:
 	bool fontDirty = true, atlasUploadDirty = true, symbolsUploadDirty = true;
 	bool fontNameSet = false;
 	std::string fontFilePath, fontName, resolvedFamily;
+	int atlasGeneration = 0;
+
+	//The money wheel's face (jackpot#1). The path is set under textMutex;
+	//the file is read lazily on the render thread when it is set (again).
+	struct FaceKey
+	{
+		int segments = 0, lines = 0, shortFile = 0, generation = 0;
+		uint32_t seed = 0, salt = 0;
+		bool operator==( const FaceKey& o ) const
+		{
+			return segments == o.segments && lines == o.lines && shortFile == o.shortFile && generation == o.generation && seed == o.seed && salt == o.salt;
+		}
+	};
+	std::string wheelFilePath;
+	bool wheelFileDirty = false;
+	wheel::FileContents wheelFile;
+	bool wheelFileOk    = false;
+	int wheelFileGeneration = 0;
+	std::string wheelFileStatus, wheelFileLogged;
+	FaceKey faceKey;
+	bool faceKeySet = false;
+	std::shared_ptr< const wheel::Face > wheelFace;
+	std::shared_ptr< const wheel::Face > labelsFace;///< the face the label texture holds
+	int labelsAtlasGeneration = -1;
+	bool labelsNoShrink       = false;
+	std::vector< wheel::LabelFit > labelFits;
 
 	mutable std::mutex textMutex;
 	char textReturn[ 1024 ] = {};
