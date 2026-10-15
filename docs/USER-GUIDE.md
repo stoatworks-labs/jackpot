@@ -31,6 +31,11 @@ sets off. Rendered by the plugin's offline harness rather than captured from Res
 > shower kept falling, and the floor was clear 15 s after Shower Off. **Play**'s place at the top of
 > the panel is measured by the harness only. Try it on a spare layer before you put it in a show.
 >
+> **Wheel files** (Segments, Wheel File, Lines and Short File on the money wheel) are new since
+> v0.1.1 and **not released yet**. They're measured by the harness only: **I haven't loaded them
+> into Resolume yet**, on a Mac or on Windows. With no file and Segments at 54 the wheel draws what
+> v0.1.1 drew, to the byte.
+>
 > This codebase was created with AI assistance, directed and reviewed by a human author.
 
 ---
@@ -141,7 +146,8 @@ Interval.
 - **Fixed Number:** the bet, 0 to 99. On the slot machine it names a symbol: 0 blank,
   1 cherry, 2 lemon, 3 orange, 4 plum, 5 bell, 6 melon, 7 bar, 8 double bar, 9 triple bar,
   10 seven, 11 diamond. On the money wheel a value it doesn't have goes to the nearest one
-  (1, 2, 5, 10, 20; 40 is the joker, 45 the logo).
+  (1, 2, 5, 10, 20; 40 is the joker, 45 the logo). On a money wheel from a file it's a line of
+  the file (see *Wheel files*).
 - **Seed:** 0 to 9999. The same seed replays the same sequence of plays.
 - **Auto Play** and **Interval:** plays by itself, every 2 to 120 seconds (default 10).
   Switching Auto Play on plays at once.
@@ -208,6 +214,98 @@ and may rock back off the last peg.
 
 - **Clapper:** how stiff the leather is. Stiffer takes more from each peg and stops the wheel
   sooner, so the operator pulls it harder.
+- **Segments** (new since v0.1.1, not released yet): 2 to 54, default 54. With no wheel file, a
+  smaller Big Six: the joker first, the logo opposite it from four segments up, and the money
+  values between them in the Big Six's order.
+- **Wheel File** (new, not released): a `.txt` of your own values. See below.
+- **Lines** (new, not released): *In Order* or *Random* (the default), for a file with more lines
+  than segments.
+- **Short File** (new, not released): *Repeat* (the default) or *Fewer Segments*, for a file with
+  fewer lines than segments.
+
+A wheel of fewer segments keeps about the Big Six's 54 pegs, two or more to a segment (37 to 72
+in all), so it ticks and slows as the big one does, and comes to rest on time the same way.
+
+### Wheel files
+
+*New since v0.1.1 and not released yet* ([jackpot#1](https://github.com/stoatworks-labs/jackpot/issues/1)).
+The money wheel can wear your own values. Write them in any text editor, one a line, save the file
+as `.txt`, and choose it with **Wheel File**:
+
+```
+*JACKPOT
+$5
+🍒
+FREE DRINK
+%SPIN AGAIN
+$10
+```
+
+![A twelve-segment money wheel from a wheel file: JACKPOT and $500 in black with gold stars, SPIN AGAIN and DOUBLE in red with gold stars, cherries, a bell, a diamond and a seven from the slot machine's reels, and SPIN AGAIN on the result board](wheel-file.png)
+
+*Twelve segments from a file, at rest on SPIN AGAIN. Rendered by the plugin's offline harness.*
+
+**How many, and which.** **Segments** sets how many there are. With more lines than segments,
+**Lines** picks them: *In Order* takes the first ones, *Random* shuffles every line by **Seed** and
+takes as many as it needs. The shuffle changes only when you change the file, Seed, Segments, Lines
+or Short File, never between spins, so you can load a wheel and spin it all night. A bigger Segments
+adds lines to the draw rather than drawing again. With fewer lines than segments, **Short File**
+either repeats them round the wheel (*Repeat*) or makes the wheel that many segments, two at the
+least (*Fewer Segments*). The lines go round clockwise, so as the wheel turns they come past the
+clapper in order.
+
+**Markers.** Start a line with `*` for the jackpot style (a black segment with a gold star) or `%`
+for the joker style (a red segment with a gold star). The marker isn't printed. Neither `*` nor `%`
+is in the plugin's type, so you can't print a literal one at the start of a line or anywhere else.
+
+**What wins.** Only the marked segments. A `*` is the jackpot: the result board goes red and **On
+Jackpot** showers. A `%` is a win: the board goes blue and **On Win** showers. Anything else is a
+loss, so a file with no markers never wins.
+
+**Results on a file's wheel:**
+
+| Result | lands on |
+| --- | --- |
+| Random | any segment, each alike |
+| Win | a marked segment (`*` or `%`) |
+| Jackpot | a `*` segment |
+| Near Miss | an unmarked segment beside a `*` |
+| Lose | an unmarked segment |
+| Fixed | the line numbered Fixed Number, counted as your editor counts them (blank lines too); one of its segments at random if Repeat put it there more than once |
+
+If the wheel hasn't got what you ask for (Jackpot with no `*` on it, or a Fixed line Random didn't
+draw) the play is Random, and the log says so. Fixed Number stops at 99, so a line after the 99th
+can't be asked for by number.
+
+**How it's printed.** The type shrinks to fit each segment. Up to 12 segments a label is set
+across its segment, level when it's at the top; from 13 it's stacked a character under another, as
+the Big Six's values are. A label longer than its segment allows is cut:
+
+| Segments | 2 | 3–4 | 5–8 | 9–12 | 13–40 | 41–54 |
+| --- | --- | --- | --- | --- | --- | --- |
+| characters | 32 | 24 | 16 | 12 | 8 | 7 |
+
+The result board shows the line in full, up to 32 characters.
+
+**Characters.** The plugin's type has capitals, digits and `$'+-.:/!`. Lowercase is printed in
+capitals, accented letters lose their accents (Café is CAFE, Łódź is LODZ), curly quotes and dashes
+become straight ones, an ellipsis becomes three dots, and anything else (`%`, `&`, `?`, `£`, `€`,
+commas, quotation marks) is left out. Runs of spaces become one.
+
+**Emoji.** The slot machine's own: 🍒 🍋 🍊 🔔 🍉 💎 and 7️⃣. Each, on a line on its own (a marker
+is fine), paints that reel symbol on the segment, and the result board says CHERRY, LEMON, ORANGE,
+BELL, MELON, DIAMOND or SEVEN. Inside text an emoji is left out like any other character the type
+hasn't got (🍒 CHERRY PIE prints CHERRY PIE), and any other emoji on its own leaves its segment
+blank.
+
+**The file itself.** UTF-8, with or without a BOM, is what any editor saves these days; UTF-16 with
+a BOM (Notepad's "Unicode") and old Windows-1252 ("ANSI") files read too. Windows, Mac and old-Mac
+line endings all work, and blank lines are skipped. The first 1,000 values are used and the rest
+ignored; a file over 1 MB isn't read. The file is read when you choose it: edit it, and choose it
+again to read it again.
+
+**When it won't load.** A file that's missing, isn't text, or has nothing in it leaves the Big Six on
+the wheel. The plugin's log says why, and so does Resolume's.
 
 ---
 
@@ -340,6 +438,7 @@ shared with other builds:
 | craps | 1.2–1.3 ms | 2.2–2.3 ms | 2.5–2.6 ms |
 | lottery, 49 balls | 0.6–0.7 ms | 1.2–1.5 ms | 3.4 ms |
 | a constant shower | 1.0 ms | 1.2 ms | 2.3 ms |
+| money wheel, 54 from a file (not released) | 0.4–0.9 ms | 0.5–0.7 ms | 1.4 ms |
 
 Up to 1080p every pixel of roulette, craps and the lottery takes four rays; above it only the
 pixels on an edge do. Nothing was timed inside Resolume.
@@ -365,6 +464,11 @@ a little slower and holds the dice before it, but no longer than that.
 **My font changed on another computer.** The font isn't installed there, so the text uses the
 built-in face, and Font Name still holds the name.
 
+**My wheel file didn't take** (not released yet). The wheel shows the Big Six when the file is
+missing, isn't text or is empty, and the log says which. If you've edited the file since, choose it
+again: it's read when it's chosen. A segment that comes out blank had nothing the type can print
+(an emoji that isn't one of the seven, say).
+
 **The effect does nothing at all.** A shader that won't compile looks just like that. The actual
 message is in the log:
 
@@ -374,8 +478,9 @@ Windows  %LOCALAPPDATA%\jackpot\logs\jackpot.YYYY-MM-DD.log
 ```
 
 It records the GL vendor, renderer and version at load, a shader that failed, the font in use (and
-a named font that isn't installed), and every play: the game, its result, and how much it was
-slowed or sped up.
+a named font that isn't installed), a wheel file read or refused (and why), and every play: the
+game, its result, and how much it was slowed or sped up; on a file's wheel, the line it landed on,
+and when nothing on the wheel fitted the Result.
 
 ---
 
@@ -406,6 +511,15 @@ table flat again once the pile has gone or Pile is switched off and on; Game and
 group; Random fair by chi-square; every game stopping at Spin Time and on the beat; the clip untouched
 by the effect where it must be. Every check also runs against a model that's wrong on purpose and
 must fail it, and a sweep fails if any control does nothing.
+
+**Wheel files (new since v0.1.1, not released yet)**, measured by the same harness and nowhere
+else: what a file becomes, in every encoding above, and that a bad one falls back and says why; a
+path in Latin, Cyrillic and emoji read on the Mac, and turned into the UTF-16 a Windows open takes;
+In Order, Random and Short File, and the draw holding from spin to spin; every Result on wheels of
+2 to 54 segments, at rest on the segment it asked for and read back out of the picture; only the
+marked segments winning; equal segments, and every label and symbol inside its own, from the
+pixels; and at the defaults, every frame of every game the same as v0.1.1's to the byte. Not loaded
+into Resolume on either platform.
 
 **Assumed, or not verified:**
 
