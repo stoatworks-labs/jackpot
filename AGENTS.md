@@ -35,12 +35,15 @@ painted; a die's S is a rotation of the solid onto itself.
     Maths.h, Geometry.*, Physics.*   polyhedral's dice engine (Physics gains a
                      pyramid-studded wall plane)
     Common.*         the seeded Stream, the playback rate curve, the Outcome
-    Controls.*       parameter ids (append only) and every 0..1 -> unit mapping
+    Controls.*       parameter ids (inserted within a group: see Controls.h) and every 0..1 -> unit mapping
     Transport.h      honeydew's beat and bar clock
     Slots.*          strips, the virtual reel, the pay table, the reel schedule
     SymbolArt.*      the reel symbols, painted on the CPU into an atlas
     Roulette.*       the ball on a profile of cones, frets, diamonds; the plan
-    MoneyWheel.*     the wheel against its clapper; the plan
+    MoneyWheel.*     the wheel against its clapper (N m pegs); the plan
+    WheelFace.*      what the wheel wears: the Big Six or a Wheel File's lines;
+                     reading, cleaning, the draw, fitting labels (jackpot#1)
+    FileBytes.*      a file by its UTF-8 path, UTF-16 on Windows (radar's)
     Craps.*          the throw on polyhedral's engine; the pass line
     Lottery.*        spheres in a sphere, the air, the tube; the deal
     Shower.*         live rigid discs; the pile, a height field that ages away
@@ -64,7 +67,8 @@ painted; a die's S is a rotation of the solid onto itself.
   BRIEF's Fable trailer.
 - **The About block, ATTRIBUTIONS.md, FUNDING.yml and the issue forms are generated**
   by stoatworks-backend's sync scripts since Jackpot was registered (2026-10-09). The
-  block has four buttons (the guide among them), so the Over effect's Mix is id 50.
+  block has four buttons (the guide among them), so the Over effect's Mix is id 54 (50
+  before jackpot#1's four Money Wheel controls went in after Clapper).
   A registration change that adds or drops a button moves Mix: the static_assert in
   Jackpot.cpp names the PT_ABOUT_BUTTON_n to add or remove, then rebuild and run
   tools/verify.sh before tagging.
@@ -100,7 +104,8 @@ painted; a die's S is a rotation of the solid onto itself.
 - **Game and Play are in no group** (0.1.1, jackpot#2). FFGL gives a parameter one
   group, and Resolume makes a group of each run of consecutive ids that share a name,
   so with the Game group closed Play was hidden. The group starts at Spin Time now;
-  nothing was renumbered (ids are append-only) and Arena stores parameters by name.
+  nothing was renumbered then, and Arena stores parameters by name. (jackpot#1 did
+  renumber, on that footing: see "Wheel files".)
   `--names` holds Play ungrouped and every group one run of ids.
 - **No presets, no audio trigger, no history board, no pay table on screen** in
   0.1.0; the spec's out-of-scope list (cards, pachinko, OpenFX, browser demo, Arena
@@ -194,6 +199,182 @@ a limit cycle -- pushed up out of the step by the position correction and fallin
 back, eight steps round -- at up to 2.6 cm/s instantaneously while going nowhere
 (0.09 thousandths of a frame in half a second), so the stillness test never passes
 and it is never stamped. It ages out with the rest. Seen once in 306 pieces of a dense pile.
+
+## Wheel files (jackpot#1, not released)
+
+VJPandaAU (a working VJ, on Windows 11) asked for their own values on the money
+wheel: a number of segments, a text file of values, N of them drawn at random or the
+first N in order, a character limit that grows as the segments get fewer, emoji as a
+bonus. Allan approved it, and VJPandaAU answered the questions on the issue: any markers
+will do, fewer lines than segments should be a choice (default repeat), draw again
+only when something changes ("loading the wheel with values and then it is spun
+multiple times"), only the marked segments win, and "KISS -- common ones" for emoji.
+
+Four controls in the Money Wheel group, after Clapper: **Segments** (integer 2-54,
+default 54), **Wheel File** (`SetFileParamInfo` only, "txt"), **Lines** (*In Order*,
+*Random*; default Random, which was the ask) and **Short File** (*Repeat*, *Fewer
+Segments*). Inserting them moved Pyramids onwards up four (Mix 50 -> 54). That is
+safe because Arena stores a composition's values by NAME (vectrix `docs/NOTES.md`
+proved it: a composition saved, an id moved, every value reloaded onto the right
+control; radar's Sprite controls went in the same way); the group has to stay one run
+of ids, so appending them at the end would have split it.
+
+**Reading** (`WheelFace.cpp`, `FileBytes.cpp`). `SetTextParameter` only stores the
+path under the text mutex (and must succeed for the empty default the SDK pushes);
+`UpdateWheelFace`, at the top of `Tick`, reads it on the render thread when the path
+was SET, the same path again included, so choosing an edited file again re-reads it.
+Never in the constructor. The bytes come through `files::ReadFileBytes`, radar's
+(`source/SpriteImage.cpp`, radar#5) with its cap made the caller's: on Windows the
+host's UTF-8 path is widened by a strict `Utf8ToUtf16` for `_wfopen_s`, and a path
+that is not UTF-8 at all is opened narrow. Decoding: a UTF-8 BOM is stripped, UTF-16
+LE/BE with a BOM is read, NUL bytes or over 5% control characters are refused as "not
+a text file", valid UTF-8 is UTF-8 and anything else is Windows-1252 (what an old
+Notepad saved). LF, CRLF and CR end lines; blank lines are skipped but counted, so a
+value's line number is an editor's. 1 MB and 1,000 values at most. A failure leaves
+the Big Six, says why in `diag::warn` and `LogToHost` once per distinct message
+(hosts may set a path repeatedly), and is kept in `WheelFileStatus()` for the harness.
+
+**Cleaning.** A leading `*` (after trimming) marks the jackpot style, `%` the joker
+style, and is removed. The atlas has digits, A-Z and `$'+-.:/!`, so: lowercase is
+folded up, Latin-1 and Latin Extended-A letters lose their accents (two tables in
+`Fold`), curly single quotes and dashes become ' and -, an ellipsis three dots, runs
+of whitespace one space, and the rest is DROPPED -- including any other `*` or `%`,
+which is why there is no escape for a literal marker (there is nothing to print it
+with). Emoji: a line that is exactly one of 🍒 🍋 🍊 🔔 🍉 💎 7️⃣ (variation selectors
+ignored; 7 + U+20E3 with or without U+FE0F) paints that `SymbolArt` tile, and the
+board says its name. **Alone only** -- inline emoji would have needed a second kind of
+"glyph" in every text path (advance, ink box, colour rather than distance); an emoji
+inside text is dropped like any other character, and an unmapped emoji alone leaves a
+blank segment.
+
+**The draw.** Random is Fisher-Yates over ALL the values, keyed on Seed and the
+number of values only, and the first Segments taken. So it changes only with the
+file, Seed, Segments, Lines or Short File (`FaceKey`), never from spin to spin; a
+larger Segments adds to the draw instead of redrawing; editing a line's text leaves
+every value where it was. Fewer values than segments: Repeat cycles them, Fewer
+Segments makes the wheel `max( 2, values )`. The values go CLOCKWISE from segment 0
+(segment `( n - k ) % n`), so the wheel, pulled anticlockwise, brings them past the
+clapper in order. Plain values cycle the Big Six's five money colours (the last
+takes purple when it would match the first); `*` is black with a gold star (the
+logo's look), `%` red with a gold star -- in v0.1.1 the joker and logo look alike, and
+the two markers ought to be told apart.
+
+**A new face is painted at rest.** `UpdateWheelFace` builds the face only when its key
+changes, keeps the shared v0.1.1 face (`DefaultFace()`) whenever the result is the
+54-segment Big Six, and replaces the pointer only when the contents differ. `Tick`
+lays the wheel out again (`Relayout`) when the face differs from the play's and the
+wheel is idle or at rest; a spin under way finishes on the wheel it started with (its
+plan holds its face), so the board never names a segment that has been repainted.
+
+**The physics: P = N m pegs.** m = round( 54 / N ), so P is 37-72 and the clapper meets
+about what it always met. A peg at every divider and m - 1 inside each segment. The
+simulation is in pegs (`Release::pegs`); the paint turns by whole SEGMENTS, i.e. m
+whole pegs, so C54 becomes C_P and stays exact (`--wheel-custom` holds it for 37, 48,
+56 and 72); the segment under the clapper is the peg gap divided by m (`Plan::Shown`).
+Each segment stays equally likely because the draw is `Below( N )` and the landing is
+the draw. At 54 every expression is v0.1.1's (`2 pi / pegs` with pegs 54 is the same
+IEEE division as the old constexpr), which the frame comparison below confirms. A
+wheel of 2 plays the 54's very trajectories: the physics sees only P. Warps
+(`--duration`): 0.95-1.65 at 54 and on 2; 1.00-1.91 on 37 (37 pegs, the fewest, so a
+3 s spin plays fastest); 6 s spins 0.91-1.06 everywhere.
+
+**Labels in a texture.** The v0.1.1 path keeps the 54 values in `Layout[54]` and seven
+spans in the text uniforms (24 spans, 192 characters at most); 54 labels of 7 do not
+fit. So a custom face's labels go in an RGBA32F texture, a row a segment, read with
+`texelFetch` (unit 4, NEAREST, created at InitGL with one row so it is never
+incomplete): texel 0 (style, symbol, characters, set across), texel 1 (height or the
+symbol's half size, anchor, ink left, ink width), then a glyph index a texel.
+`FitLabels` sizes each label on the CPU from the atlas's ink boxes, so it is redone
+when the font changes (`atlasGeneration`). Up to 12 segments a label is set ACROSS (one
+line, level at the top: the anchor is its middle's radius, kept at 0.62 m when the
+type allows); from 13 it is STACKED as v0.1.1's, from 0.775 m in (nearer the hub when
+big type would reach the rim). The type is the largest (to 0.15 m across on 2-4
+segments, 0.10 on 5-12, 0.11 stacked) that keeps every character's box, a quarter of a
+height of slack above and below a capital, kMargin (10 mm) clear of both dividers,
+inside the outer band and clear of the hub (0.30 m; 0.41 on a marked segment, above
+its star). Caps: 32 characters on 2, 24 on 3-4, 16 on 5-8, 12 on 9-12, 8 on 13-40, 7 on
+41-54 (7 so JACKPOT, the Big Six's own longest word, fits); the board keeps 32.
+Symbols are a square tile fitted the same way, as far out as fits when stacked.
+
+**Results on a file's wheel.** "Only the marked segments win" makes Win and Fixed part
+company, where on the Big Six they were the same pick (the bet's value): Win lands on
+a marked segment (either kind), Jackpot on a `*`, Near Miss on an unmarked segment
+beside a `*`, Lose on an unmarked one, and Fixed on the LINE numbered Fixed Number,
+counted as an editor counts (with Random the segment number would be meaningless to
+the operator; a line is what they can see in the file). Nothing that fits -- Jackpot
+with no `*`, a line Random did not draw -- is drawn as Random, as v0.1.1's `pick` already
+did for an impossible ask, and the play's log line says so (`Plan::fellBack`). The
+outcome: `win` = marked, `jackpot` = `*`, `nearMiss` = not a win beside a `*`, the
+board's words the line (to 32). The Big Six keeps v0.1.1's rules against the values
+its wheel has (the bet snaps to the nearest value present).
+
+**Segments with no file** is a smaller Big Six: the joker at 0, the logo opposite at
+N/2 from 4 segments up, and the money values between them in the Big Six's own order
+(`Layout()` without its two top segments). At 54 that is `Layout()` itself.
+
+**Defaults change nothing.** The v0.1.1 face, the v0.1.1 pegs and v0.1.1's uniforms run
+whenever the face is the 54-segment Big Six (`Custom == 0`); the custom face is a
+separate block beside it, and the v0.1.1 block moved only by an indent. Proved, not
+assumed: the v0.1.1 harness (built from the tag's source, a8ff0ba) and this one, `--film`,
+byte for byte over 4,500 frames in ten scenes -- the money wheel Random (two plays), on
+Jackpot with the board, on Fixed 20 over Felt at 1080p, the Over on Near Miss, 900 frames
+of Auto Play at 640x360, and slots, roulette, craps, lottery and the shower -- all
+identical. (8-bit frames, as radar compared Sprite Count 0; the float picture was not
+compared.)
+
+**Cost** (`--bench`, three runs each, against the v0.1.1 harness at its defaults): the
+Big Six at 1080p 0.48-0.72 ms before, 0.49-0.56 now; a wheel of 54 from a file of 80
+long lines 0.50-0.71 ms; at 4K 1.40-1.41, 1.37-1.38 and 1.42-1.44. Within the bench's
+noise (an idle-ish GPU's clock moves a 0.5 ms frame by half again).
+
+**Decisions taken without asking** (the issue settled the rest):
+
+- `*` jackpot, `%` joker (`$` collides with money); no literal marker, as neither
+  character can be printed anyway.
+- Lines defaults to Random (the ask), Short File to Repeat (the issue's choice).
+- Win = any marked segment; Fixed = a line of the file; an ask nothing fits plays
+  Random and logs it; Near Miss is beside a `*` only.
+- The joker style is red, so the two markers look different; the Big Six's joker
+  keeps v0.1.1's black.
+- Emoji alone only; other characters folded or dropped as above.
+- Re-choosing the same path re-reads the file (edit the list, choose it again).
+- The draw keyed on Seed and the number of values, not the text.
+- A new face waits for the wheel to come to rest.
+- The result board shows the whole line (to 32) even when the segment cut it.
+- Segments without a file: the smaller Big Six above.
+- Typeface's own `fopen` of Font File (and its second open for the family name)
+  now goes through `ReadFileBytes`, with a narrow retry on Windows for a path the
+  ANSI font scan (`FindFirstFileA`) produced. The scan itself still opens narrow:
+  its paths ARE in the ANSI code page.
+
+**Traps hit:**
+
+- **Sampling the Big Six at a stride aliased with its pattern.** `Layout()[ j * 54 / N ]`
+  gave 13 segments six $2s in a row and no $1 (a stride of about 4 hits one parity of a
+  pattern of period 2). Now built from the pattern in order.
+- **Big stacked type could never grow.** The stack's top was fixed at v0.1.1's 0.775,
+  so a bigger character broke the rim and the fit fell back to v0.1.1's size on every
+  wheel. Moving the anchor in by height alone still failed, as the first character's
+  corner (its half width) then sat just outside the circle; the anchor is now set from
+  that corner.
+- **6 characters for 41-54 cut JACKPOT** (the design's first number); 7.
+- **The old GLSL mutant's text appeared twice** once the v0.1.1 face sat in a branch
+  beside the custom one; both mutants now carry the line before (SEGMENTS / Segments).
+
+**Checks** (all in `verify.sh`; the first three offline, so CI runs them):
+
+| check | what it holds | negative controls |
+| --- | --- | --- |
+| `--wheel-file` | nine texts as expected (markers, blank lines counted, LF/CRLF/CR, BOM, UTF-16 LE/BE, Windows-1252, the emoji, folding, dropping) incl. `glücksrad.txt` by path; six bad files refused with the reason; the 1,000-value cap; a Latin/Cyrillic/emoji file name read, and its path's UTF-16 equal to the compiler's own `u""` literal, five malformed sequences refused; the plugin's empty default, a file, a missing and a broken one (Big Six, and why), cleared | the path widened byte by byte (a narrow fopen); the BOM and CR kept, LF the only line end; markers ignored |
+| `--wheel-draw` | In Order clockwise and met in order by the clapper; Random distinct, stable per Seed, a prefix as Segments grows; chi-square over every Seed (which are drawn, which lands first); Short File both ways; the cuts; through the plugin, six plays on one draw, Seed away and back, an edited file re-read with its lines in place, re-chosen unchanged the same face | Sattolo's off-by-one shuffle; the draw redone every play |
+| `--wheel-custom` | 128 plans on wheels of 2-54 (a file, the Big Six on 2 and 13), every Result: at rest on the drawn segment, read under the clapper as painted, of the kind asked, falling back only when nothing fits; outcomes (only marked win; the Big Six as v0.1.1); 6 s warps 0.85-1.30; a file with no markers never wins; chi-square per N; C_P for 37, 48, 56, 72 pegs | no shift; Random below N - 1; every segment wins; a peg a segment (P = N: a 2-segment wheel plays 1.84x) |
+| `--wheel-geometry` (GL) | 2, 8, 24, 54 segments of awkward labels, 1280x720: the id picture's arcs within 2 px of 2 pi / N, in order; `TestFlat` 3 (R the segment's own ink, G a neighbour's ink reaching in): no G, no own ink within a divider's half width and a pixel, none off the bands, every label and symbol showing | every label at its largest; the shader told N + 1 segments |
+| `--wheel-readback` (added rows) | Fixed lines on wheels of 2, 8, 24, 54, read under the clapper from the id picture, 640x360 and 320x180 | no shift (the existing control) |
+| `--duration`, `--determinism` (added rows) | the wheel on 2, 8, 24, 36, 37 segments; a file's wheel played twice | the existing ones |
+
+The fixtures are in `tools/fixtures/` (`.gitattributes` keeps their bytes:
+`bom-crlf.txt` and `cp1252.txt` are what they are named). `showcase.txt` is
+`docs/wheel-file.png`'s.
 
 ## The traps, in the order they cost time
 
@@ -337,15 +518,20 @@ sweep). The worktree guard keys on the session's starting directory, so a bare
 
 ## Mutation testing
 
-`tools/mutate.sh`, twelve one-character mutants, each caught by the named check:
+`tools/mutate.sh`, seventeen one-character mutants, each caught by the named check:
 
 | mutant | caught by |
 | --- | --- |
 | GLSL roulette pocket at a point: `phi - RingAngle` → `+` | `--roulette-readback` (40 of 40 wrong) |
 | GLSL the stop at a reel's row: `floor( u + 0.5 )` → `- 0.5` | `--slots-readback` |
 | GLSL the money wheel's segment at a point: `- WheelAngle` → `+` | `--wheel-readback` (6 of 7 wrong) |
+| GLSL a wheel of Segments' segment at a point: `- WheelAngle` → `+` | `--wheel-readback` (9 of 12 file lines wrong) |
 | C++ the ring's shift: `best.pocket - plan.wanted` → `+` | `--roulette` (36 of 37 wrong) |
 | C++ the segment under the clapper: `- whole` → `+` | `--wheel` |
+| C++ the segment the physics landed in: `best.gap / m` → `% m` | `--wheel-custom` (104 of 128 plans off target) |
+| C++ a file's values laid clockwise: `( n - k ) % n` → `n + k` | `--wheel-draw` (22 of 24 misplaced) |
+| C++ the jackpot marker: `U'*'` → `U'%'` | `--wheel-file` |
+| C++ a stacked label's clearance from a divider: `x sn - w cs` → `+` | `--wheel-geometry` (300 spilt pixels on 54) |
 | C++ a drawn ball marked dealt: `= 1` → `= 0` | `--lottery` |
 | C++ the virtual stops beside the seven: 6 → 1 | `--nearmiss` (12.3 per jackpot falls to 2.1) |
 | C++ the eased playback's start rate: `0.5 * k` → `0.6` | `--duration` (craps stops early) |
@@ -356,10 +542,11 @@ sweep). The worktree guard keys on the session's starting directory, so a bare
 
 ## The sweep's context table
 
-Emptied (`tools/sweep.py --no-context`), 27 controls go dead: Land On, Fixed Number,
-Interval, Strip, Blur, Reel Bounce, the roulette, money wheel, craps, lottery and
-shower controls, the felt colour, Display, Light Angle, Tilt, and the effect's Clip
-symbols. Every one is a control that belongs to another game or acts at another
+Emptied (`tools/sweep.py --no-context`), 31 controls go dead: Land On, Fixed Number,
+Interval, Strip, Blur, Reel Bounce, the roulette, money wheel (Clapper, Segments, Wheel
+File, Lines, Short File), craps, lottery and shower controls, the felt colour, Display,
+Light Angle, Tilt, and the effect's Clip symbols. Lines needs a file with more lines than
+segments (`eighty.txt` on 12) and Short File one with fewer (`three.txt` on 12). Every one is a control that belongs to another game or acts at another
 moment; none is live only by a side effect.
 
 ## In Arena (2026-10-09)
@@ -380,7 +567,11 @@ they act only on a play and the gate never presses Play; which ones was measured
 jptest first (`--play 100000 --frames 60`: Play never pressed, the same frame both
 sides). An idle slot machine is not still: the lamps chase at 3 Hz, so the faint
 controls hold Lights 0 as a precondition. A change to what an idle game draws, or a
-new control, must change that file in the same commit.
+new control, must change that file in the same commit. **jackpot#1 did not** (the gate
+is plugin-bench's, and its file is re-seeded from a running Arena, never by hand): the
+expectation still describes v0.1.1's 50/52 controls in v0.1.1's order. The four new ones
+change an idle picture only with Game on Money Wheel (and Lines/Short File only with a
+file of more or fewer lines than Segments), so they want those as preconditions.
 
 ## What is verified, and what is assumed
 
@@ -391,7 +582,8 @@ clapper's energy; fairness by chi-square; the virtual reel's near-miss rate; the
 shutter's integral; the pass line; the lottery's deal; free fall under drag, the
 tumble, energy at contact and Euler's disk; the pile clearing, staying on the table,
 never stalling the pool and leaving the table flat; Spin Time and Land On; the clip
-under the effect; fonts; the state between plays; Game and Play outside every group.
+under the effect; fonts; the state between plays; Game and Play outside every group;
+wheel files (above), harness only.
 
 Assumed or chosen, not measured:
 
