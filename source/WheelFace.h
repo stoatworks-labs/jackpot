@@ -106,6 +106,7 @@ struct FileContents
 	std::string encoding;
 	std::vector< std::string > notes;
 	int marked = 0;
+	int blank  = 0;///< values with nothing the type can print (Cyrillic, say): blank segments
 };
 
 /// The wrong models `jptest --negative` puts in (never set in the plugin).

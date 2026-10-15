@@ -25,6 +25,23 @@ namespace jackpot::files
 /// is refused rather than truncated. `why` says what went wrong, for the log.
 bool ReadFileBytes( const std::string& utf8Path, std::vector< unsigned char >& out, std::string& why, size_t maxBytes );
 
+/// A file's size and last write, to tell whether it changed since it was
+/// read without reading it again. `modified` is the platform's own ticks
+/// (nanoseconds here, 100 ns on Windows): compared, never interpreted.
+struct FileStamp
+{
+	unsigned long long size = 0;
+	long long modified      = 0;
+	bool operator==( const FileStamp& o ) const
+	{
+		return size == o.size && modified == o.modified;
+	}
+};
+
+/// The stamp of a file by its UTF-8 path (UTF-16 on Windows, as ReadFileBytes).
+/// False when there is no such file.
+bool StampFile( const std::string& utf8Path, FileStamp& out );
+
 /// Strict UTF-8 to UTF-16 (what `_wfopen` takes on Windows): overlong forms,
 /// surrogates, code points past U+10FFFF and truncated sequences are refused,
 /// never guessed at. Portable, so the harness checks it on macOS

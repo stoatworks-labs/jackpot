@@ -57,6 +57,8 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <sys/time.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -704,6 +706,8 @@ struct Perturb
 	bool onePegPerSegment    = false;///< --wheel-custom: P = N pegs, not about 54
 	bool noLabelShrink       = false;///< --wheel-geometry: every label at its largest
 	bool segmentsOffByOne    = false;///< --wheel-geometry: the shader told one segment more
+	bool faceSwapAtOnce      = false;///< --wheel-draw: a new wheel painted the moment a spin ends, before its result
+	bool alwaysReread        = false;///< --wheel-file: the file read again whenever its path is set
 };
 
 using CheckFn = int ( * )( const Perturb& );
@@ -2666,6 +2670,52 @@ int runWheelFile( const Perturb& perturb )
 		plugin.SetTextParameter( PT_WHEEL_FILE, "" );
 		plugin.TickForTest( kFrame );
 		const bool cleared = plugin.WheelFaceForTest() == wheel::DefaultFace() && plugin.WheelFileStatus().empty();
+		//Values the type cannot print, and a path set again.
+		bool okC = false, okM = false;
+		std::string whyC, whyM;
+		const wheel::FileContents cyr = parseBytes( "ПРИВЕТ\nМИР\n", rf, okC, whyC ), mixed = parseBytes( "A\nМИР\n", rf, okM, whyM );
+		auto noted = []( const wheel::FileContents& c, const char* says ) {
+			for( const std::string& n : c.notes )
+				if( n.find( says ) != std::string::npos )
+					return true;
+			return false;
+		};
+		const bool counted = okC && cyr.blank == 2 && noted( cyr, "2 of 2 values have nothing" ) && okM && mixed.blank == 1 && noted( mixed, "1 of 2 values have nothing" );
+		plugin.SetTextParameter( PT_WHEEL_FILE, writeScratch( "cyrillic.txt", "ПРИВЕТ\nМИР\n" ).c_str() );
+		plugin.TickForTest( kFrame );
+		const bool warnedAll = plugin.WheelFileLoaded() && plugin.WheelFileWarned() && plugin.WheelFileMessage().find( "every segment is blank" ) != std::string::npos;
+		plugin.SetTextParameter( PT_WHEEL_FILE, writeScratch( "mixed.txt", "A\nМИР\n" ).c_str() );
+		plugin.TickForTest( kFrame );
+		const bool notedSome = plugin.WheelFileLoaded() && !plugin.WheelFileWarned() && plugin.WheelFileMessage().find( "1 of 2 values have nothing" ) != std::string::npos;
+		Check( counted && warnedAll && notedSome,
+		       fmt( "values the type cannot print (Cyrillic): counted and noted (%s); all of them, loaded with a warning to the log and the host (%s); some, a note (%s)",
+		            counted ? "yes" : "NO", warnedAll ? "yes" : "NO", notedSome ? "yes" : "NO" ) );
+		{
+			JackpotPlugin again( false );
+			again.Flags().alwaysReread = perturb.alwaysReread;
+			again.SetFloatParameter( PT_GAME, static_cast< float >( Game::MoneyWheel ) );
+			const std::string path = writeScratch( "reread.txt", "AAA\nBBB\n" );
+			auto choose            = [ & ]() {
+				again.SetTextParameter( PT_WHEEL_FILE, path.c_str() );
+				again.TickForTest( kFrame );
+				return again.WheelFileReads();
+			};
+			const int first = choose(), same = choose();
+			//The same size, another time: an edit.
+			writeScratch( "reread.txt", "CCC\nDDD\n" );
+			struct timeval later[ 2 ];
+			gettimeofday( &later[ 0 ], nullptr );
+			later[ 0 ].tv_sec += 10;
+			later[ 1 ] = later[ 0 ];
+			utimes( path.c_str(), later );
+			const int edited = choose();
+			const bool newText = again.WheelFaceForTest()->segment[ 0 ].label == "CCC";
+			const int sameAgain = choose();
+			Check( first == 1 && same == 1 && edited == 2 && newText && sameAgain == 2,
+			       fmt( "the same path set again: read only when its size or time has changed (reads after choosing, choosing again, editing, choosing again: %d %d %d %d; "
+			            "the edit shows: %s)",
+			            first, same, edited, sameAgain, newText ? "yes" : "NO" ) );
+		}
 		Check( pushed && bigSix && loaded && missing && broken && cleared,
 		       fmt( "the plugin: the empty default accepted (%s) and the Big Six (%s); prizes.txt read on the next frame, 54 segments (%s); a missing file (%s) and a broken one (%s) "
 		            "fall back to the Big Six and say why; cleared, the Big Six (%s)",
@@ -2812,10 +2862,15 @@ int runWheelDraw( const Perturb& perturb )
 			++plays;
 			moved += faceLabels( plugin.CurrentPlay().wheel.WheelFace() ) != first || faceLabels( *plugin.WheelFaceForTest() ) != first ? 1 : 0;
 		}
+		//Seed 6 straight after a landing: the next play's wheel at once, the
+		//one on screen once the result has had its kBannerFor.
 		plugin.SetFloatParameter( PT_SEED, 6.0f );
 		plugin.TickForTest( kFrame );
 		const std::vector< std::string > seed6 = faceLabels( *plugin.WheelFaceForTest() );
-		const bool redrawn                     = seed6 != first && faceLabels( plugin.CurrentPlay().wheel.WheelFace() ) == seed6;
+		const bool held = faceLabels( plugin.CurrentPlay().wheel.WheelFace() ) == first;
+		for( int f = 0; f < static_cast< int >( std::ceil( ( kBannerFor + 0.1 ) * 60.0 ) ); ++f )
+			plugin.TickForTest( kFrame );
+		const bool redrawn = seed6 != first && held && faceLabels( plugin.CurrentPlay().wheel.WheelFace() ) == seed6;
 		plugin.SetFloatParameter( PT_SEED, 5.0f );
 		plugin.TickForTest( kFrame );
 		const bool back = faceLabels( *plugin.WheelFaceForTest() ) == first;
@@ -2830,9 +2885,112 @@ int runWheelDraw( const Perturb& perturb )
 		plugin.TickForTest( kFrame );
 		const bool kept = plugin.WheelFaceForTest() == edited;
 		Check( plays == 6 && moved == 0 && redrawn && back && reread && kept,
-		       fmt( "the plugin, Random on 24 of 80: %d plays on the wheel they started with (%d not); Seed 6 another wheel, at once at rest (%s); Seed 5 the first again (%s); the "
+		       fmt( "the plugin, Random on 24 of 80: %d plays on the wheel they started with (%d not); Seed 6 another wheel, painted once the result has had its %.1f s (%s); "
+		            "Seed 5 the first again (%s); the "
 		            "file edited and chosen again, new text in the same places (%s); chosen again unchanged, the same wheel (%s)",
-		            plays, moved, redrawn ? "yes" : "NO", back ? "yes" : "NO", reread ? "yes" : "NO", kept ? "yes" : "NO" ) );
+		            plays, moved, kBannerFor, redrawn ? "yes" : "NO", back ? "yes" : "NO", reread ? "yes" : "NO", kept ? "yes" : "NO" ) );
+	}
+	//A change while a play is under way, or while its result is up: the spin
+	//lands on the wheel it started with and keeps its result (OnRest: the
+	//shower, the board, the log) for kBannerFor; then the new wheel. An idle
+	//wheel changes at once, and Play always takes the new one.
+	{
+		struct Way
+		{
+			const char* name;
+			bool synchronous, file;
+		};
+		const std::string prizes = fixturePath( "prizes.txt" );
+		int wrong = 0;
+		std::string seen;
+		for( const Way& way : { Way { "the Big Six", true, false }, Way { "the Big Six, planned on the worker", false, false }, Way { "prizes.txt", true, true } } )
+		{
+			JackpotPlugin plugin( false );
+			plugin.SetSynchronousForTest( way.synchronous );
+			plugin.Flags().faceSwapAtOnce = perturb.faceSwapAtOnce;
+			plugin.SetFloatParameter( PT_GAME, static_cast< float >( Game::MoneyWheel ) );
+			plugin.SetFloatParameter( PT_RESULT, static_cast< float >( Result::Jackpot ) );
+			plugin.SetFloatParameter( PT_SPIN_TIME, ParamFromSpinTime( 2.0 ) );
+			if( way.file )
+				plugin.SetTextParameter( PT_WHEEL_FILE, prizes.c_str() );
+			auto tick = [ & ]( double seconds ) {
+				for( int f = 0; f < static_cast< int >( std::lround( seconds * 60.0 ) ); ++f )
+				{
+					plugin.TickForTest( kFrame );
+					if( !way.synchronous )
+						std::this_thread::sleep_for( std::chrono::microseconds( 500 ) );
+				}
+			};
+			auto untilRest = [ & ]( int rests ) {
+				for( int f = 0; f < 1200 && plugin.RestsSeen() == rests; ++f )
+				{
+					plugin.TickForTest( kFrame );
+					if( !way.synchronous )
+						std::this_thread::sleep_for( std::chrono::microseconds( 500 ) );
+				}
+				return plugin.RestsSeen() > rests;
+			};
+			auto count   = [ & ]() { return plugin.CurrentPlay().wheel.WheelFace().Count(); };
+			auto sinceRest = [ & ]() { return plugin.PlaybackSeconds() - plugin.CurrentPlay().Clock().duration; };
+			tick( 2.0 / 60.0 );
+			const int was = count();
+			//A: Segments changed straight after the press (before a worker's plan
+			//comes back) and again mid-spin.
+			int rests = plugin.RestsSeen();
+			plugin.SetFloatParameter( PT_PLAY, 1.0f );
+			plugin.SetFloatParameter( PT_PLAY, 0.0f );
+			tick( 1.0 / 60.0 );
+			plugin.SetFloatParameter( PT_SEGMENTS, 30.0f );
+			tick( 0.5 );
+			plugin.SetFloatParameter( PT_SEGMENTS, 24.0f );
+			const bool landed   = untilRest( rests );
+			const std::string result = plugin.CurrentPlay().Result().text;
+			tick( 0.5 );
+			const bool showered = !plugin.CurrentShower().Pieces().empty();
+			const bool board    = !result.empty() && plugin.BoardText() == result && plugin.CurrentPlay().Result().jackpot;
+			tick( kBannerFor - sinceRest() - 0.1 );
+			const bool kept = count() == was && plugin.BoardText() == result;
+			tick( 0.2 );
+			const bool swapped = count() == 24 && plugin.BoardText().empty();
+			//B: Segments changed at rest, straight after a landing.
+			rests = plugin.RestsSeen();
+			plugin.SetFloatParameter( PT_PLAY, 1.0f );
+			plugin.SetFloatParameter( PT_PLAY, 0.0f );
+			const bool landedB = untilRest( rests );
+			const bool on24    = count() == 24;
+			const std::string resultB = plugin.CurrentPlay().Result().text;
+			plugin.SetFloatParameter( PT_SEGMENTS, 13.0f );
+			tick( 1.0 / 60.0 );
+			const bool boardB = plugin.BoardText() == resultB && !resultB.empty() && count() == 24;
+			tick( kBannerFor - sinceRest() - 0.1 );
+			const bool keptB = plugin.BoardText() == resultB && count() == 24;
+			tick( 0.2 );
+			const bool swappedB = count() == 13;
+			//C: idle, a change is painted at once.
+			plugin.SetFloatParameter( PT_SEGMENTS, 8.0f );
+			tick( 1.0 / 60.0 );
+			const bool idleAtOnce = count() == 8;
+			//D: a landing, a change, Play at once: the new play has the new wheel.
+			rests = plugin.RestsSeen();
+			plugin.SetFloatParameter( PT_PLAY, 1.0f );
+			plugin.SetFloatParameter( PT_PLAY, 0.0f );
+			untilRest( rests );
+			const int playsBefore = plugin.PlaysStarted();
+			plugin.SetFloatParameter( PT_SEGMENTS, 2.0f );
+			plugin.SetFloatParameter( PT_PLAY, 1.0f );
+			plugin.SetFloatParameter( PT_PLAY, 0.0f );
+			for( int f = 0; f < 600 && plugin.PlaysStarted() == playsBefore; ++f )
+				tick( 1.0 / 60.0 );
+			const bool playTakes = plugin.PlaysStarted() > playsBefore && count() == 2;
+			const bool ok = landed && showered && board && kept && swapped && landedB && on24 && boardB && keptB && swappedB && idleAtOnce && playTakes;
+			wrong += ok ? 0 : 1;
+			seen += fmt( "; %s: %s (landed %s, shower %s, board '%s' %s, kept %s then the new wheel %s; at rest: %s %s %s; idle %s; Play %s)", way.name, ok ? "yes" : "NO",
+			             landed ? "yes" : "NO", showered ? "yes" : "NO", result.c_str(), board ? "yes" : "NO", kept ? "yes" : "NO", swapped ? "yes" : "NO",
+			             boardB ? "yes" : "NO", keptB ? "yes" : "NO", swappedB ? "yes" : "NO", idleAtOnce ? "yes" : "NO", playTakes ? "yes" : "NO" );
+		}
+		Check( wrong == 0, fmt( "Segments changed mid-spin, and again straight after a landing: the spin lands on its own wheel, showers and shows its result for %.1f s, then the new "
+		                        "wheel; idle, at once; Play takes the new one%s",
+		                        kBannerFor, seen.c_str() ) );
 	}
 	return Verdict();
 }
@@ -3492,6 +3650,8 @@ int runNegative( bool offlineOnly = false )
 	add( "wheel-file", runWheelFile, "no markers: a leading * or % is just a character", []( Perturb& p ) { p.noMarkers = true; } );
 	add( "wheel-draw", runWheelDraw, "Sattolo's shuffle (j below i, not i + 1): no value ever stays in its place", []( Perturb& p ) { p.sattolo = true; } );
 	add( "wheel-draw", runWheelDraw, "the Random lines drawn again for every play", []( Perturb& p ) { p.drawPerSpin = true; } );
+	add( "wheel-draw", runWheelDraw, "a new wheel painted the moment a spin ends, before its result is handled (and over it at rest)", []( Perturb& p ) { p.faceSwapAtOnce = true; } );
+	add( "wheel-file", runWheelFile, "the file read again whenever its path is set, changed or not", []( Perturb& p ) { p.alwaysReread = true; } );
 	add( "wheel-custom", runWheelCustom, "no segment shift on wheels of 2 to 54", []( Perturb& p ) { p.noShift = true; } );
 	add( "wheel-custom", runWheelCustom, "Random drawn Below( N - 1 ) on wheels of 2 to 54", []( Perturb& p ) { p.biasedDraw = true; } );
 	add( "wheel-custom", runWheelCustom, "every segment of a file wins, marked or not", []( Perturb& p ) { p.markedWinAny = true; } );

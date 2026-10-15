@@ -1523,6 +1523,12 @@ float labelInk( int j, vec2 q, float mpx )
 	return max( step( 0.0, labelDistance( j, q ) ), step( 0.5, labelSymbol( j, q, mpx ).a ) );
 }
 
+//Segment k (unwrapped) as a row of Labels: 0 .. Segments - 1, never Segments.
+int segmentIndex( float k )
+{
+	return clamp( int( mod( k, float( Segments ) ) ), 0, Segments - 1 );
+}
+
 //The point m (metres) in segment j's frame, k being j unwrapped.
 vec2 segmentFrame( vec2 m, float k, float seg )
 {
@@ -1626,7 +1632,9 @@ vec4 drawWheel( vec2 p, float px )
 			float u   = ( atan( m.y, m.x ) - WheelAngle ) / seg;
 			float k   = floor( u );
 			float f   = u - k;
-			int j     = int( mod( k, float( Segments ) ) );
+			//mod can return Segments itself at a float boundary: clamped, or the
+			//texelFetch below reads past the last row.
+			int j     = segmentIndex( k );
 			int style = int( texelFetch( Labels, ivec2( 0, j ), 0 ).x + 0.5 );
 			//The id picture (jptest): the segment and its style.
 			if( TestFlat == 2 )
@@ -1636,8 +1644,8 @@ vec4 drawWheel( vec2 p, float px )
 			//a neighbour's reaches in (which it never may), B the segment.
 			if( TestFlat == 3 )
 			{
-				float spill = max( labelInk( int( mod( k - 1.0, float( Segments ) ) ), segmentFrame( m, k - 1.0, seg ), mpx ),
-				                   labelInk( int( mod( k + 1.0, float( Segments ) ) ), segmentFrame( m, k + 1.0, seg ), mpx ) );
+				float spill = max( labelInk( segmentIndex( k - 1.0 ), segmentFrame( m, k - 1.0, seg ), mpx ),
+				                   labelInk( segmentIndex( k + 1.0 ), segmentFrame( m, k + 1.0, seg ), mpx ) );
 				return face <= 0.0 ? vec4( labelInk( j, q, mpx ), spill, float( j + 1 ) / 64.0, 1.0 ) : vec4( 0.0 );
 			}
 			vec3 c      = styleColour( style );

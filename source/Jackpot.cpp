@@ -32,7 +32,6 @@ double wallSeconds()
 
 constexpr int kClockVotes       = 4;
 constexpr double kMaxFrameDelta = 0.25;///< host seconds; a bigger step is a jump
-constexpr double kBannerFor     = 3.5; ///< seconds a win's banner stays up
 constexpr double kCountUp       = 1.6; ///< seconds the win meter takes to count
 constexpr float kSpace          = 0.5f;///< a space's advance in H, = SPACE in Shaders.cpp (0.35 ran "31 6" together)
 constexpr int kBallSlots        = 192; ///< columns of the lottery's ball texture: this draw's, and the last's draining
@@ -777,10 +776,14 @@ void JackpotPlugin::Tick( double dt )
 	const bool changed = params[ PT_REELS ] != layoutKey[ 0 ] || params[ PT_SYMBOLS ] != layoutKey[ 1 ] || params[ PT_WHEEL ] != layoutKey[ 2 ]
 	                     || params[ PT_BALLS ] != layoutKey[ 3 ] || ( idle && game == Game::Craps && ( params[ PT_RESULT ] != layoutKey[ 4 ] || params[ PT_FIXED_NUMBER ] != layoutKey[ 5 ] ) );
 	//A new money wheel (Segments, the file, Lines, Short File, Seed on a
-	//Random draw) is painted on once the wheel is at rest; a spin under way
-	//finishes on the wheel it started with.
+	//Random draw) is never painted on during a spin, nor over a result: a
+	//play that has landed (and been through OnRest -- the shower, the board,
+	//the log) keeps its wheel, highlight and board for kBannerFor; an idle
+	//wheel changes at once; Play always takes the new one (StartPlay).
+	//Relaying out before OnRest lost the spin's result entirely.
+	const bool showing = !play.Idle() && ( !restHandled || clock - playStart < play.Clock().duration + kBannerFor );
 	const bool newFace = game == Game::MoneyWheel && play.game == Game::MoneyWheel && play.wheel.request.face != wheelFace && !pending.valid()
-	                     && ( play.Idle() || clock - playStart >= play.Clock().duration );
+	                     && ( flags.faceSwapAtOnce ? ( play.Idle() || clock - playStart >= play.Clock().duration ) : !showing );
 	if( !laidOut || static_cast< int >( game ) != layoutGame || ( idle && changed ) || newFace )
 		Relayout();
 	else if( changed )
@@ -957,6 +960,15 @@ void JackpotPlugin::SetCommonUniforms( FFGLShader& shader, int width, int height
 	shader.Set( "Atlas", 1 );
 }
 
+std::string JackpotPlugin::BoardText() const
+{
+	const Game game = play.game;
+	if( game == Game::Slots || game == Game::ShowerOnly || play.Idle() || params[ PT_DISPLAY ] <= 0.5f )
+		return {};
+	const double since = clock - playStart - play.Clock().duration;
+	return since >= 0.0 ? play.Result().text : std::string();
+}
+
 /// The game's own spans, and after them the result board's words: shown at
 /// rest after a play with Display on, faded in over a third of a second.
 void JackpotPlugin::SetTextUniforms( FFGLShader& shader, std::vector< std::string > spans )
@@ -964,17 +976,14 @@ void JackpotPlugin::SetTextUniforms( FFGLShader& shader, std::vector< std::strin
 	int resultSpan  = -1;
 	float amount    = 0.0f;
 	int tone        = 0;
-	const Game game = play.game;
-	if( game != Game::Slots && game != Game::ShowerOnly && !play.Idle() && params[ PT_DISPLAY ] > 0.5f )
+	const std::string board = BoardText();
+	if( !board.empty() )
 	{
 		const double since = clock - playStart - play.Clock().duration;
-		if( since >= 0.0 && !play.Result().text.empty() )
-		{
-			resultSpan = static_cast< int >( spans.size() );
-			spans.push_back( play.Result().text );
-			amount = static_cast< float >( Smooth( since / 0.33 ) );
-			tone   = play.Result().jackpot ? 2 : play.Result().win ? 1 : 0;
-		}
+		resultSpan         = static_cast< int >( spans.size() );
+		spans.push_back( board );
+		amount = static_cast< float >( Smooth( since / 0.33 ) );
+		tone   = play.Result().jackpot ? 2 : play.Result().win ? 1 : 0;
 	}
 	shader.Set( "ResultSpan", resultSpan );
 	shader.Set( "ResultAmount", amount );
@@ -1259,11 +1268,23 @@ void JackpotPlugin::UpdateWheelFace()
 			path           = wheelFilePath;
 		}
 	}
+	//Set again, the same path is read again only if the file's size or time
+	//has changed: a host re-sending the path must not read a file from a slow
+	//share on the render thread every time, but an edited file, chosen again,
+	//is picked up.
+	files::FileStamp stamp;
+	bool stamped = false;
+	if( reload && !path.empty() )
+	{
+		stamped = files::StampFile( path, stamp );
+		if( !flags.alwaysReread && path == wheelFileReadPath && stamped && wheelFileStamped && stamp == wheelFileStamp )
+			reload = false;
+	}
 	if( reload )
 	{
 		wheel::FileContents contents;
 		std::string why, message;
-		bool ok = false;
+		bool ok = false, warn = false;
 		if( path.empty() )
 			message = wheelFileOk ? "Wheel File cleared: the money wheel is the Big Six" : "";
 		else if( wheel::LoadWheelFile( path, contents, why ) )
@@ -1273,25 +1294,39 @@ void JackpotPlugin::UpdateWheelFace()
 			          + contents.encoding;
 			for( const std::string& note : contents.notes )
 				message += "; " + note;
+			//Every value blank: it loaded, and it is no use.
+			if( contents.blank == static_cast< int >( contents.entries.size() ) )
+			{
+				warn    = true;
+				message = "the wheel file has nothing the plugin's type can print (it has A-Z, 0-9, $'+-.:/! and seven emoji), so every segment is blank: " + path;
+			}
 		}
 		else
+		{
+			warn    = true;
 			message = "the wheel file " + why + ", so the money wheel is the Big Six: " + path;
+		}
 		wheelFileStatus = ok || path.empty() ? std::string() : why;
 		if( ok != wheelFileOk || !SameEntries( contents, wheelFile ) )
 			++wheelFileGeneration;
-		wheelFileOk = ok;
-		wheelFile   = std::move( contents );
+		wheelFileOk       = ok;
+		wheelFile         = std::move( contents );
+		wheelFileReadPath = path;
+		wheelFileStamp    = stamp;
+		wheelFileStamped  = stamped;
+		wheelFileReads += path.empty() ? 0 : 1;
 		//Once for each thing that happens, however often a host sets the path.
 		if( !message.empty() && message != wheelFileLogged )
 		{
-			if( ok || path.empty() )
-				diag::info( message );
-			else
+			if( warn )
 			{
 				diag::warn( message );
 				FFGLLog::LogToHost( ( "Jackpot: " + message ).c_str() );
 			}
+			else
+				diag::info( message );
 			wheelFileLogged = message;
+			wheelFileWarned = warn;
 		}
 	}
 

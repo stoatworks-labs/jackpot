@@ -22,9 +22,9 @@ sets off. Rendered by the plugin's offline harness rather than captured from Res
 > the real plugin classes in a headless GL context. Every number of both roulette wheels, every
 > value of the money wheel and every craps total was played, and each came to rest as asked; the
 > harness then reads the result **out of the rendered picture** for the slot machine, the
-> roulette wheel and the money wheel. Every game stops at exactly Spin Time. Twenty-four models
-> that are wrong on purpose are all detected, twelve one-character changes to the shipped code are
-> all caught, and all 46 controls across the two plugins measurably do something. v0.1.1's
+> roulette wheel and the money wheel. Every game stops at exactly Spin Time. Thirty-seven models
+> that are wrong on purpose are all detected, seventeen one-character changes to the shipped code
+> are all caught, and all 50 controls across the two plugins measurably do something. v0.1.1's
 > shower fix was run in Resolume Arena 7.27.1 on Windows (software rendering, a build of the 0.1.1
 > code made with MSVC on the lab machine, 2026-10-12): with Shower
 > Only on Always, chips showered, then coins, the chips were gone about 14 s after the switch, the
@@ -254,6 +254,13 @@ either repeats them round the wheel (*Repeat*) or makes the wheel that many segm
 least (*Fewer Segments*). The lines go round clockwise, so as the wheel turns they come past the
 clapper in order.
 
+**Changing it while it plays.** Change the file, Segments, Lines, Short File or (on Random) Seed
+while the wheel is spinning and the spin finishes on the wheel it started with, showers and puts
+its result up as usual. The result stays on screen for 3.5 seconds after it lands, and then the new
+wheel goes on. With nothing showing, the new wheel goes on at once. Press Play at any point and the
+play spins the new wheel (pressed while a result is still up, the new wheel appears as the operator
+pulls it).
+
 **Markers.** Start a line with `*` for the jackpot style (a black segment with a gold star) or `%`
 for the joker style (a red segment with a gold star). The marker isn't printed. Neither `*` nor `%`
 is in the plugin's type, so you can't print a literal one at the start of a line or anywhere else.
@@ -302,10 +309,13 @@ blank.
 a BOM (Notepad's "Unicode") and old Windows-1252 ("ANSI") files read too. Windows, Mac and old-Mac
 line endings all work, and blank lines are skipped. The first 1,000 values are used and the rest
 ignored; a file over 1 MB isn't read. The file is read when you choose it: edit it, and choose it
-again to read it again.
+again to read it again (it's only read again if its size or date has changed, so a host sending the
+same path over and over costs nothing).
 
 **When it won't load.** A file that's missing, isn't text, or has nothing in it leaves the Big Six on
-the wheel. The plugin's log says why, and so does Resolume's.
+the wheel. The plugin's log says why, and so does Resolume's. A file whose values are all in a
+script the type hasn't got (Cyrillic, Greek, Chinese) loads, but every segment is blank, and the log
+and Resolume say that too; when only some are, the log notes how many.
 
 ---
 

@@ -345,6 +345,7 @@ FileContents ParseText( const std::u32string& text, const ReadTestFlags& flags )
 				if( e.symbol == 0 )
 					e.label = CleanLabel( s );
 				file.marked += e.mark != Mark::None ? 1 : 0;
+				file.blank += e.label.empty() && e.symbol == 0 ? 1 : 0;
 				file.entries.push_back( e );
 			}
 		}
@@ -353,6 +354,11 @@ FileContents ParseText( const std::u32string& text, const ReadTestFlags& flags )
 	}
 	if( ignored > 0 )
 		file.notes.push_back( std::to_string( ignored ) + " values past the first " + std::to_string( kMaxValues ) + " ignored" );
+	//A Cyrillic, Greek or CJK value, or an emoji the reels have not got, has
+	//nothing the atlas can print: its segment comes out blank. Say so.
+	if( file.blank > 0 )
+		file.notes.push_back( std::to_string( file.blank ) + " of " + std::to_string( file.entries.size() )
+		                      + " values have nothing the plugin's type can print (it has A-Z, 0-9, $'+-.:/! and seven emoji), so their segments are blank" );
 	return file;
 }
 
