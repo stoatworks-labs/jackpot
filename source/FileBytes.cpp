@@ -4,6 +4,15 @@
 #include <cstdio>
 #include <system_error>
 
+#if defined( _WIN32 )
+	#ifndef NOMINMAX
+		#define NOMINMAX
+	#endif
+	#include <windows.h>
+#else
+	#include <sys/stat.h>
+#endif
+
 namespace jackpot::files
 {
 // From radar's SpriteImage.cpp (radar#5), unchanged but for the size cap,
@@ -75,6 +84,39 @@ std::u16string WidenBytesForTest( const std::string& in )
 	for( char c : in )
 		out.push_back( static_cast< char16_t >( static_cast< unsigned char >( c ) ) );
 	return out;
+}
+
+bool StampFile( const std::string& utf8Path, FileStamp& out )
+{
+	out = FileStamp {};
+#if defined( _WIN32 )
+	WIN32_FILE_ATTRIBUTE_DATA data {};
+	std::u16string wide16;
+	BOOL found = FALSE;
+	if( Utf8ToUtf16( utf8Path, wide16 ) )
+	{
+		const std::wstring wide( wide16.begin(), wide16.end() );
+		found = GetFileAttributesExW( wide.c_str(), GetFileExInfoStandard, &data );
+	}
+	else
+		found = GetFileAttributesExA( utf8Path.c_str(), GetFileExInfoStandard, &data );
+	if( !found )
+		return false;
+	out.size     = ( static_cast< unsigned long long >( data.nFileSizeHigh ) << 32 ) | data.nFileSizeLow;
+	out.modified = static_cast< long long >( ( static_cast< unsigned long long >( data.ftLastWriteTime.dwHighDateTime ) << 32 ) | data.ftLastWriteTime.dwLowDateTime );
+	return true;
+#else
+	struct stat info {};
+	if( stat( utf8Path.c_str(), &info ) != 0 )
+		return false;
+	out.size = static_cast< unsigned long long >( info.st_size );
+	#if defined( __APPLE__ )
+	out.modified = static_cast< long long >( info.st_mtimespec.tv_sec ) * 1000000000LL + info.st_mtimespec.tv_nsec;
+	#else
+	out.modified = static_cast< long long >( info.st_mtim.tv_sec ) * 1000000000LL + info.st_mtim.tv_nsec;
+	#endif
+	return true;
+#endif
 }
 
 bool ReadFileBytes( const std::string& utf8Path, std::vector< unsigned char >& out, std::string& why, size_t maxBytes )

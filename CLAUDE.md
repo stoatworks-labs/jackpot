@@ -55,7 +55,7 @@ shader's mirrored constants, or the harness's readbacks.
 - **The plugin**: `--defaults`, `--names` (also: Game and Play in no group, every
   group one run of ids: jackpot#2), `--determinism`, `--over-check`, `--resize`,
   `--fonts`, `--state`.
-- **The checks can fail**: `--negative` (35 wrong models), `tools/mutate.sh`
+- **The checks can fail**: `--negative` (37 wrong models), `tools/mutate.sh`
   (four GLSL and thirteen C++ one-character mutants).
 - What CI runs: `--offline` (the checks that need no GL context, and their
   negative controls; says loudly that the pixel checks were not run) and

@@ -259,12 +259,18 @@ takes purple when it would match the first); `*` is black with a gold star (the
 logo's look), `%` red with a gold star -- in v0.1.1 the joker and logo look alike, and
 the two markers ought to be told apart.
 
-**A new face is painted at rest.** `UpdateWheelFace` builds the face only when its key
-changes, keeps the shared v0.1.1 face (`DefaultFace()`) whenever the result is the
-54-segment Big Six, and replaces the pointer only when the contents differ. `Tick`
-lays the wheel out again (`Relayout`) when the face differs from the play's and the
-wheel is idle or at rest; a spin under way finishes on the wheel it started with (its
-plan holds its face), so the board never names a segment that has been repainted.
+**A new face is never painted over a spin or its result.** `UpdateWheelFace` builds
+the face only when its key changes, keeps the shared v0.1.1 face (`DefaultFace()`)
+whenever the result is the 54-segment Big Six, and replaces the pointer only when the
+contents differ. `Tick` lays the wheel out again (`Relayout`) with the new face only
+when nothing is showing: an idle wheel at once; a play only once it has landed, been
+through `OnRest` (the shower, `winSince`, the log) and kept its wheel, highlight and
+board for `kBannerFor` (3.5 s, the slot machine's banner time, now in Jackpot.h). A spin
+under way finishes on the wheel it started with (its plan holds its face), and a plan
+still on the worker counts as under way. Play always takes the new face (`WheelRequest`
+reads it): pressed during a result's 3.5 s, or mid-spin after a change, the new play
+repaints the wheel as the pull begins. That is cosmetic -- the pull turns the paint
+anyway -- and left as it is.
 
 **The physics: P = N m pegs.** m = round( 54 / N ), so P is 37-72 and the clapper meets
 about what it always met. A peg at every divider and m - 1 inside each segment. The
@@ -339,7 +345,8 @@ noise (an idle-ish GPU's clock moves a 0.5 ms frame by half again).
 - Emoji alone only; other characters folded or dropped as above.
 - Re-choosing the same path re-reads the file (edit the list, choose it again).
 - The draw keyed on Seed and the number of values, not the text.
-- A new face waits for the wheel to come to rest.
+- A new face waits for the spin to land and its result's 3.5 s (the reviewer's rule,
+  after the first version lost results: see the traps).
 - The result board shows the whole line (to 32) even when the segment cut it.
 - Segments without a file: the smaller Big Six above.
 - Typeface's own `fopen` of Font File (and its second open for the family name)
@@ -360,13 +367,32 @@ noise (an idle-ish GPU's clock moves a 0.5 ms frame by half again).
 - **6 characters for 41-54 cut JACKPOT** (the design's first number); 7.
 - **The old GLSL mutant's text appeared twice** once the v0.1.1 face sat in a branch
   beside the custom one; both mutants now carry the line before (SEGMENTS / Segments).
+- **A face change during a spin lost the spin's result** (found in review, after the
+  first push). The first version re-laid the wheel out as soon as the spin's time was up,
+  and `Relayout` runs before the `OnRest` check in `Tick` and sets `restHandled`: on
+  the landing frame the new face won, so there was no shower, no `winSince`, no board,
+  no highlight and no log line. The same with a worker's plan made on the old face.
+  Changed at rest, it wiped the board on the next frame. Now gated on `restHandled`
+  and `kBannerFor`; `--wheel-draw` changes Segments mid-spin (synchronous, on the worker,
+  and on a file) and at rest, and its negative control (`faceSwapAtOnce`, the old rule)
+  fails it: landed NO, shower NO, board empty.
+- **Values that clean to nothing loaded without a word.** A Cyrillic, Greek or CJK file,
+  or unmapped emoji, gave blank segments and an "ok" log. Now counted (`blank`), noted in
+  the log, and a file whose every value is blank warns through `LogToHost` too.
+- **Setting the same path again re-read the file every time** on the render thread (a
+  host re-sending a path, a slow share). Now only when its size or modified time has
+  changed (`files::StampFile`: `stat` here, `GetFileAttributesExW` on Windows), so an
+  edited file chosen again is still read.
+- **`int( mod( k, float( Segments ) ) )` can be Segments itself** at a float boundary,
+  a `texelFetch` past the last row. Clamped (`segmentIndex`) in the custom branch only;
+  the v0.1.1 branch is untouched and still compares byte for byte.
 
 **Checks** (all in `verify.sh`; the first three offline, so CI runs them):
 
 | check | what it holds | negative controls |
 | --- | --- | --- |
-| `--wheel-file` | nine texts as expected (markers, blank lines counted, LF/CRLF/CR, BOM, UTF-16 LE/BE, Windows-1252, the emoji, folding, dropping) incl. `glücksrad.txt` by path; six bad files refused with the reason; the 1,000-value cap; a Latin/Cyrillic/emoji file name read, and its path's UTF-16 equal to the compiler's own `u""` literal, five malformed sequences refused; the plugin's empty default, a file, a missing and a broken one (Big Six, and why), cleared | the path widened byte by byte (a narrow fopen); the BOM and CR kept, LF the only line end; markers ignored |
-| `--wheel-draw` | In Order clockwise and met in order by the clapper; Random distinct, stable per Seed, a prefix as Segments grows; chi-square over every Seed (which are drawn, which lands first); Short File both ways; the cuts; through the plugin, six plays on one draw, Seed away and back, an edited file re-read with its lines in place, re-chosen unchanged the same face | Sattolo's off-by-one shuffle; the draw redone every play |
+| `--wheel-file` | nine texts as expected (markers, blank lines counted, LF/CRLF/CR, BOM, UTF-16 LE/BE, Windows-1252, the emoji, folding, dropping) incl. `glücksrad.txt` by path; six bad files refused with the reason; the 1,000-value cap; a Latin/Cyrillic/emoji file name read, and its path's UTF-16 equal to the compiler's own `u""` literal, five malformed sequences refused; values the type cannot print counted, noted, and warned of when they are all there is; the same path set again read only when its size or time changed (reads 1 1 2 2 over choose, choose, edit, choose); the plugin's empty default, a file, a missing and a broken one (Big Six, and why), cleared | the path widened byte by byte (a narrow fopen); the BOM and CR kept, LF the only line end; markers ignored; the file read again whenever its path is set |
+| `--wheel-draw` | In Order clockwise and met in order by the clapper; Random distinct, stable per Seed, a prefix as Segments grows; chi-square over every Seed (which are drawn, which lands first); Short File both ways; the cuts; through the plugin, six plays on one draw, Seed away (painted after the result's 3.5 s) and back, an edited file re-read with its lines in place, re-chosen unchanged the same face; Segments changed mid-spin and at rest (synchronous, on the worker, a file): the spin lands, showers and shows its board, keeps its wheel 3.5 s, then the new one; idle at once; Play takes the new one | Sattolo's off-by-one shuffle; the draw redone every play; the new wheel painted the moment the spin ends (the first version) |
 | `--wheel-custom` | 128 plans on wheels of 2-54 (a file, the Big Six on 2 and 13), every Result: at rest on the drawn segment, read under the clapper as painted, of the kind asked, falling back only when nothing fits; outcomes (only marked win; the Big Six as v0.1.1); 6 s warps 0.85-1.30; a file with no markers never wins; chi-square per N; C_P for 37, 48, 56, 72 pegs | no shift; Random below N - 1; every segment wins; a peg a segment (P = N: a 2-segment wheel plays 1.84x) |
 | `--wheel-geometry` (GL) | 2, 8, 24, 54 segments of awkward labels, 1280x720: the id picture's arcs within 2 px of 2 pi / N, in order; `TestFlat` 3 (R the segment's own ink, G a neighbour's ink reaching in): no G, no own ink within a divider's half width and a pixel, none off the bands, every label and symbol showing | every label at its largest; the shader told N + 1 segments |
 | `--wheel-readback` (added rows) | Fixed lines on wheels of 2, 8, 24, 54, read under the clapper from the id picture, 640x360 and 320x180 | no shift (the existing control) |

@@ -2,6 +2,7 @@
 
 #include "Controls.h"
 #include "Craps.h"
+#include "FileBytes.h"
 #include "Lottery.h"
 #include "MoneyWheel.h"
 #include "Roulette.h"
@@ -26,6 +27,10 @@
 
 namespace jackpot
 {
+/// Seconds a win's banner (and the celebration) stays up; a money wheel keeps
+/// a landed result this long before a new face is painted on.
+constexpr double kBannerFor = 3.5;
+
 /// Everything one play is: the game it was, its plan, and when it began.
 struct Play
 {
@@ -138,6 +143,8 @@ public:
 		bool drawPerSpin    = false;///< the file's Random draw redone every play (--wheel-draw)
 		bool markedWinAny   = false;///< a file's every segment wins (--wheel-custom)
 		bool onePegPerSegment = false;///< P = N, not about 54 (--wheel-custom)
+		bool faceSwapAtOnce = false;///< a new wheel painted the moment a spin ends, before OnRest (--wheel-draw)
+		bool alwaysReread   = false;///< the Wheel File read again whenever its path is set (--wheel-file)
 	};
 	TestFlags& Flags()
 	{
@@ -206,6 +213,22 @@ public:
 	{
 		return wheelFileOk;
 	}
+	/// What the last Wheel File load logged, and whether as a warning.
+	std::string WheelFileMessage() const
+	{
+		return wheelFileLogged;
+	}
+	bool WheelFileWarned() const
+	{
+		return wheelFileWarned;
+	}
+	/// How many times a Wheel File has actually been read.
+	int WheelFileReads() const
+	{
+		return wheelFileReads;
+	}
+	/// The words the result board shows this frame; empty, none.
+	std::string BoardText() const;
 	/// The label fits last uploaded (--wheel-geometry reports the sizes).
 	const std::vector< wheel::LabelFit >& LabelFitsForTest() const
 	{
@@ -327,6 +350,11 @@ private:
 	bool wheelFileOk    = false;
 	int wheelFileGeneration = 0;
 	std::string wheelFileStatus, wheelFileLogged;
+	bool wheelFileWarned = false;
+	int wheelFileReads   = 0;
+	std::string wheelFileReadPath;    ///< the path last read, and its size and time then
+	files::FileStamp wheelFileStamp;
+	bool wheelFileStamped = false;
 	FaceKey faceKey;
 	bool faceKeySet = false;
 	std::shared_ptr< const wheel::Face > wheelFace;

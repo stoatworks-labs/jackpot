@@ -158,7 +158,9 @@ line, chosen with **Wheel File**.
 - **Segments** (2–54) is how many there are. With more lines than that, **Lines** picks
   them: *In Order* takes the first ones, *Random* (the default) shuffles every line by Seed
   and takes what it needs. The shuffle changes only when the file, Seed, Segments, Lines or
-  Short File does, never between spins, so you can load a wheel and spin it all night.
+  Short File does, never between spins, so you can load a wheel and spin it all night. Change
+  any of them mid-spin and the spin lands on the wheel it started with; the result then stays
+  up for 3.5 seconds before the new wheel goes on. Play always spins the new one.
 - With fewer lines than segments, **Short File** repeats them round the wheel (*Repeat*, the
   default) or makes the wheel that many segments, two at the least (*Fewer Segments*).
 - **Markers.** A leading `*` makes a segment the jackpot (black, a gold star), a leading `%`
@@ -184,9 +186,11 @@ line, chosen with **Wheel File**.
   hasn't got (Jackpot with no `*`, or a line Random left off) and you get a Random play, and
   the log says so.
 - **When it won't load.** A missing file, one that isn't text, or one with nothing in it
-  leaves the Big Six on the wheel, and the plugin's log (and Resolume's) says why. UTF-8 with
-  or without a BOM, UTF-16 with a BOM and old Windows-1252 files all read. A file is read when
-  it's chosen, and choosing it again reads it again, so an edited wheel wants picking again.
+  leaves the Big Six on the wheel, and the plugin's log (and Resolume's) says why; so does a
+  file whose values the type can't print at all (Cyrillic, say), which loads as blank
+  segments. UTF-8 with or without a BOM, UTF-16 with a BOM and old Windows-1252 files all
+  read. A file is read when it's chosen; choose it again after editing it and it's read again
+  (if its size or date has changed).
 - **Segments with no file** makes a smaller Big Six: the joker first, the logo opposite it
   from four segments up, and the money values between them in the Big Six's order.
 
@@ -289,7 +293,7 @@ What's measured, on this Mac:
 | Over | the clip (premultiplied, alpha and all) untouched where there is no game and everywhere at Mix 0, to 1.2×10⁻⁷ |
 | the rest | defaults, names (unique as Arena addresses them, no '/'; Game and Play outside every group, each group one run of ids), determinism (the same seed is the same play to the bit), resize mid-shower, fonts by name, missing and by file, credits and the craps point carried between plays, the roulette ring never jumping at a Play, and a slot pull mid-spin carrying the reels on from where they are |
 | tables | the dice's face loops, groups and labels identical from arm64 with fused multiply-adds, arm64 without, and x86_64 (polyhedral's check) |
-| negative controls | **35** deliberately wrong models, **all 35** detected (11 of them for the wheel files) |
+| negative controls | **37** deliberately wrong models, **all 37** detected (13 of them for the wheel files) |
 | mutants | **17** one-character changes (four GLSL, thirteen C++), **all 17** caught |
 | dead controls | **50** parameters over both plugins, all live |
 
