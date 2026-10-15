@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "Diag.h"
+#include "FileBytes.h"
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #define STBTT_STATIC
@@ -54,6 +55,25 @@ bool ReadAt( std::FILE* file, long offset, void* into, size_t bytes )
 	return std::fread( into, 1, bytes, file ) == bytes;
 }
 
+/// Where a face's tables are read from: the open file (the scan, which reads
+/// only the name table), or the bytes already loaded (Typeface::Load, which
+/// used to open the file a second time, narrow, for the family name).
+struct Source
+{
+	std::FILE* file                           = nullptr;
+	const std::vector< unsigned char >* bytes = nullptr;
+
+	bool Read( long offset, void* into, size_t count ) const
+	{
+		if( bytes == nullptr )
+			return ReadAt( file, offset, into, count );
+		if( offset < 0 || static_cast< size_t >( offset ) > bytes->size() || count > bytes->size() - static_cast< size_t >( offset ) )
+			return false;
+		std::memcpy( into, bytes->data() + offset, count );
+		return true;
+	}
+};
+
 /// UTF-16BE, as the Windows platform stores names, reduced to ASCII. Family
 /// names outside ASCII exist, but this is a dropdown label -- it has to survive
 /// a round trip through an FFGL parameter name, which is a `char*`.
@@ -77,10 +97,10 @@ std::string DecodeNameAscii( const std::vector< unsigned char >& raw )
 }
 
 /// Family name of the face at `faceOffset`, read from the name table alone.
-std::string ReadFamilyName( std::FILE* file, uint32_t faceOffset )
+std::string ReadFamilyName( const Source& file, uint32_t faceOffset )
 {
 	unsigned char header[ 12 ];
-	if( !ReadAt( file, static_cast< long >( faceOffset ), header, sizeof( header ) ) )
+	if( !file.Read( static_cast< long >( faceOffset ), header, sizeof( header ) ) )
 		return {};
 
 	const uint16_t tableCount = ReadU16( header + 4 );
@@ -88,7 +108,7 @@ std::string ReadFamilyName( std::FILE* file, uint32_t faceOffset )
 		return {};
 
 	std::vector< unsigned char > directory( static_cast< size_t >( tableCount ) * 16u );
-	if( !ReadAt( file, static_cast< long >( faceOffset ) + 12, directory.data(), directory.size() ) )
+	if( !file.Read( static_cast< long >( faceOffset ) + 12, directory.data(), directory.size() ) )
 		return {};
 
 	uint32_t nameOffset = 0;
@@ -108,7 +128,7 @@ std::string ReadFamilyName( std::FILE* file, uint32_t faceOffset )
 		return {};
 
 	std::vector< unsigned char > table( nameLength );
-	if( !ReadAt( file, static_cast< long >( nameOffset ), table.data(), table.size() ) )
+	if( !file.Read( static_cast< long >( nameOffset ), table.data(), table.size() ) )
 		return {};
 
 	const uint16_t recordCount = ReadU16( table.data() + 2 );
@@ -211,7 +231,7 @@ void ScanFontFile( const std::string& path, std::vector< FontFile >& into )
 
 	for( size_t i = 0; i < faceOffsets.size(); ++i )
 	{
-		const std::string family = ReadFamilyName( file, faceOffsets[ i ] );
+		const std::string family = ReadFamilyName( Source { file, nullptr }, faceOffsets[ i ] );
 		if( family.empty() )
 			continue;
 
@@ -415,35 +435,39 @@ bool Typeface::Load( const std::string& path, int collectionIndex )
 	if( path.empty() )
 		return false;
 
-	std::FILE* file = std::fopen( path.c_str(), "rb" );
-	if( file == nullptr )
+	// The whole file, through the UTF-8 reader the Wheel File uses: Font File's
+	// path comes from the host as UTF-8, and a narrow fopen of it fails on
+	// Windows for any folder with a non-ASCII name. A font over 64 MB is a
+	// pan-CJK collection, and loading one to draw ninety latin characters is
+	// not a trade worth making inside somebody else's process.
+	std::string why;
+	if( !files::ReadFileBytes( path, data, why, 64u * 1024u * 1024u ) )
 	{
-		diag::warn( "font will not open: " + path );
-		return false;
-	}
-
-	std::fseek( file, 0, SEEK_END );
-	const long size = std::ftell( file );
-	std::fseek( file, 0, SEEK_SET );
-
-	// A font over 64 MB is a pan-CJK collection, and loading one to draw ninety
-	// latin characters is not a trade worth making inside somebody else's
-	// process.
-	if( size <= 0 || size > 64L * 1024L * 1024L )
-	{
-		std::fclose( file );
-		diag::warn( "font is an implausible size, ignoring: " + path );
-		return false;
-	}
-
-	data.resize( static_cast< size_t >( size ) );
-	const size_t read = std::fread( data.data(), 1, data.size(), file );
-	std::fclose( file );
-
-	if( read != data.size() )
-	{
-		UseBuiltin();
-		return false;
+#if defined( _WIN32 )
+		// A path from the font scan is in the ANSI code page (FindFirstFileA),
+		// and one that happens also to be valid UTF-8 was just widened wrongly.
+		// Opened narrow, it is exactly what the scan found.
+		std::FILE* file = nullptr;
+		if( fopen_s( &file, path.c_str(), "rb" ) == 0 && file != nullptr )
+		{
+			std::fseek( file, 0, SEEK_END );
+			const long size = std::ftell( file );
+			std::fseek( file, 0, SEEK_SET );
+			if( size > 0 && size <= 64L * 1024L * 1024L )
+			{
+				data.resize( static_cast< size_t >( size ) );
+				if( std::fread( data.data(), 1, data.size(), file ) != data.size() )
+					data.clear();
+			}
+			std::fclose( file );
+		}
+		if( data.empty() )
+#endif
+		{
+			UseBuiltin();
+			diag::warn( "font " + why + ": " + path );
+			return false;
+		}
 	}
 
 	info.resize( sizeof( stbtt_fontinfo ) );
@@ -459,15 +483,8 @@ bool Typeface::Load( const std::string& path, int collectionIndex )
 
 	loaded = true;
 
-	// Re-open to read the name table rather than keeping the handle: the load
-	// path above needs the file closed before it can be sure the whole thing is
-	// in `data`, and a family name is worth one extra open.
-	std::FILE* named = std::fopen( path.c_str(), "rb" );
-	if( named != nullptr )
-	{
-		family = ReadFamilyName( named, static_cast< uint32_t >( offset ) );
-		std::fclose( named );
-	}
+	// The family name from the bytes already read: no second open.
+	family = ReadFamilyName( Source { nullptr, &data }, static_cast< uint32_t >( offset ) );
 
 	diag::info( "font loaded: " + ( family.empty() ? path : family ) );
 	return true;

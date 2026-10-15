@@ -18,7 +18,8 @@
       kScene      the 3D games' camera, light, primitives and materials
       kRoulette   the wheel: a surface of revolution of cones, each
                   intersected exactly; frets, diamonds, turret and ball
-      kWheel      the money wheel, face on
+      kWheel      the money wheel, face on: its constants, the labels of a
+                  wheel of Segments (jackpot#1); kWheelMain draws it
       kCraps      the table's layout and the two dice
       kLottery    the drum and its balls
       kShowerVS/FS   one quad per piece; exact ray/cylinder in the fragment
@@ -39,6 +40,7 @@ extern const char* const kScene;
 extern const char* const kRoulette;
 extern const char* const kRouletteMain;
 extern const char* const kWheel;
+extern const char* const kWheelMain;
 extern const char* const kCraps;
 extern const char* const kCrapsMain;
 extern const char* const kLottery;
