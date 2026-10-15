@@ -42,7 +42,7 @@ shader's mirrored constants, or the harness's readbacks.
   the mutants, the sweep, the bench)
 - **The results**: `--slots`, `--roulette`, `--wheel`, `--craps`, `--lottery`;
   out of the pixels: `--slots-readback`, `--roulette-readback`, `--wheel-readback`.
-- **Wheel files** (jackpot#1, not released): `--wheel-file` (what a file becomes, the
+- **Wheel files** (jackpot#1, v0.2.0): `--wheel-file` (what a file becomes, the
   fallbacks, a non-ASCII path), `--wheel-draw` (In Order, Random, Short File, the draw
   holding between spins), `--wheel-custom` (every Result on 2-54 segments, only marked
   segments win, C_P), `--wheel-geometry` (GL: equal segments, labels inside their own).
@@ -114,21 +114,13 @@ shader's mirrored constants, or the harness's readbacks.
   CI runs because the repo is public (the fleet's rule for Actions minutes).
 
 ## Not done yet
-- In Resolume: two plays on this Mac, and the Windows gate (17/17, no play pressed),
-  both 2026-10-09; no OpenFX port, no browser demo, no presets. The 0.1.1 pile fix
+- In Resolume: two plays on this Mac (2026-10-09), and the Windows gate (19/19 at v0.2.0,
+  2026-10-15; no play pressed); no OpenFX port, no browser demo, no presets. The 0.1.1 pile fix
   (jackpot#3) was run in Arena on Windows, 2026-10-12 (Shower Only); Play's place (jackpot#2) has not been looked at.
-- **Wheel files (jackpot#1) have not been loaded into Resolume** on either platform.
-  Wanted on winlab: a Wheel File from a folder with a non-ASCII name (the UTF-16 open is
-  checked only as far as the conversion, on the Mac), a file saved by Notepad as UTF-8,
-  "Unicode" and ANSI, re-choosing an edited file, Segments and the Fixed lines, and that
-  a saved composition restores the renumbered controls (Arena stores them by name).
-- **plugin-bench `arena/expect/jackpot.json` needs re-seeding** from a running Arena: four
-  new controls and every id from Pyramids on moved up four (source 54, effect 55
-  declared). The new ones change an idle picture only with Game on Money Wheel (Lines
-  and Short File also need a file of more or fewer lines than Segments).
-- **ATTRIBUTIONS (generated)**: `source/FileBytes.cpp` is radar's `ReadFileBytes` /
-  `Utf8ToUtf16`; stoatworks-backend's `derived.json` may want an entry for it before the
-  next sync. `docs/USER-GUIDE.pdf` is not rebuilt for the wheel files.
+- **Wheel files (jackpot#1, v0.2.0)**: in Arena on Windows only, 2026-10-15 (an MSVC build:
+  the hand checks in the README's Status, and plugin-bench's gate 19/19 with
+  `arena/fixtures/jackpot-wheel.txt`, 30 values so Lines and Short File can act). Never on a
+  Mac, and a saved composition's restore of the renumbered controls not watched.
 
 ## Diagnostics
 

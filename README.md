@@ -139,7 +139,7 @@ first reel 2 and two cherries 5. A pull costs a credit; the meter starts at 100.
 
 ## Wheel files
 
-*New since v0.1.1, not released yet* ([jackpot#1](https://github.com/stoatworks-labs/jackpot/issues/1),
+*New in v0.2.0* ([jackpot#1](https://github.com/stoatworks-labs/jackpot/issues/1),
 VJPandaAU's idea). The money wheel can wear your own values: a plain `.txt` file, one value a
 line, chosen with **Wheel File**.
 
@@ -204,7 +204,7 @@ line, chosen with **Wheel File**.
   effect *Clip*: the clip where the seven would be), Strip (*Virtual*,
   *Physical*), Blur (the shutter), Reel Bounce.
 - **Roulette:** Wheel (*European*, *American*), Rotor Speed, Deflectors.
-- **Money wheel:** Clapper (the leather's stiffness). *New since v0.1.1, not released yet:*
+- **Money wheel:** Clapper (the leather's stiffness). *New in v0.2.0:*
   Segments (2–54), Wheel File (a `.txt`, one value a line), Lines (*In Order*, *Random*) and
   Short File (*Repeat*, *Fewer Segments*); see [Wheel files](#wheel-files).
 - **Craps:** Pyramids (the back wall's rubber), Puck.
@@ -225,7 +225,7 @@ composition restores both.
 
 ## Status
 
-**v0.1.1, 2026-10-12, and still early days** (v0.1.0 came out on 2026-10-09). User guide:
+**v0.2.0, 2026-10-15, and still early days** (v0.1.0 came out on 2026-10-09, v0.1.1 on 2026-10-12). User guide:
 [stoatworks-labs.com/software/jackpot/guide](https://stoatworks-labs.com/software/jackpot/guide/).
 
 **New in v0.1.1:** the shower's pile clears itself (jackpot#3: every piece
@@ -236,12 +236,16 @@ are measured by the harness below (`--pile`, `--names`). The pile's clearing was
 in Resolume Arena 7.27.1 on Windows (software rendering, a build of the 0.1.1 code made with MSVC on the lab machine, 2026-10-12);
 I haven't looked at where Play sits in Resolume yet.
 
-**New since v0.1.1, not released yet: wheel files** (jackpot#1). Segments, Wheel File, Lines
+**New in v0.2.0: wheel files** (jackpot#1). Segments, Wheel File, Lines
 and Short File are measured by the harness below (`--wheel-file`, `--wheel-draw`,
 `--wheel-custom`, `--wheel-geometry`, and the wheel rows of `--wheel-readback`, `--duration`
-and `--determinism`). **I haven't loaded them into Resolume yet**, on a Mac or on Windows, and
-the Windows way of opening a file whose path isn't ASCII has been checked only as far as the
-UTF-16 conversion, here. At the defaults (no file, 54 segments) both plugins draw what v0.1.1
+and `--determinism`). In Resolume Arena 7.27.1 on Windows (software rendering, an MSVC build of this code on the lab
+machine, 2026-10-15) wheel files loaded from a folder named `räder ✓ 🎰`, and as Notepad saves
+them in UTF-8 with a BOM, "Unicode" (UTF-16) and ANSI; the emoji showed as the reel art; a PNG
+renamed to .txt left the Big Six, and the log said why; a file edited and chosen again was read
+again; a Jackpot spin landed on the `*` segment with its board and shower, Fixed Number 3 on the
+file's line 3, and Segments changed mid-spin left that spin's result up before painting the new
+wheel. Not yet on a Mac. At the defaults (no file, 54 segments) both plugins draw what v0.1.1
 drew, to the byte: 4,500 frames over ten scenes, the money wheel's Random, Jackpot, Fixed,
 Near Miss and Auto Play among them, compared with the v0.1.1 harness.
 
@@ -258,14 +262,16 @@ probe` reads the bundles as a host does and `oxbow selftest` renders through eac
 OpenFX port, no browser demo.
 
 **In Resolume Arena 7.27.1 on Windows** (win-lab, Mesa llvmpipe, no GPU,
-2026-10-09): a CI build of this source loads from Extra Effects, `SW Jackpot`
-registers as `JP01`, a source, and `SW Jackpot Over` as `JP02`, an effect; all 50
-and 52 host controls match the declaration in name, order, type, range and default
+2026-10-15, an MSVC build of the v0.2.0 code; v0.1.0's CI build passed the same gate on
+2026-10-09 with 50 and 52 controls): it loads from Extra Effects, `SW Jackpot`
+registers as `JP01`, a source, and `SW Jackpot Over` as `JP02`, an effect; all 54
+and 56 host controls match the declaration in name, order, type, range and default
 (the two names at Resolume's 16-character limit complete); both render, with a font
-loaded from file, and Arena's log stays clean through the run: **17 passed, 0 failed**
+and a wheel file loaded from file, and Arena's log stays clean through the run: **19 passed, 0 failed**
 of the fleet gate's checks. The gate never presses Play, so it can only show the
-controls that change an idle picture: 25 on the source and 27 on the effect did,
-none read dead, and Font File alone was inconclusive. The 16 that act only on a play
+controls that change an idle picture: 28 on the source and 30 on the effect did
+(Segments, Lines and Short File among them), none read dead, and the two file controls
+were inconclusive. The 16 that act only on a play
 (Spin Time, Land On, Result, Fixed Number, Seed, Strip, Blur, Reel Bounce, Rotor
 Speed, Clapper, the lottery's Balls, Draw and Air, Display, Auto Play and Interval)
 were not measured there. Software rendering says nothing about a GPU or about speed.
@@ -281,10 +287,10 @@ What's measured, on this Mac:
 | roulette | every number of both wheels, Fixed: the ball at rest in the pocket painted with it, 75 of 75; the rotor turned 1, 5, 18 and 36 pockets, the ball's path **bit-identical**; ten releases leave the lip within **0.47%** of v² = g r tan 14°; Random chi-square 41.6 and 33.3 (critical 68.1, 69.4); the ball's top never above 73.4 mm, the lip drawn to 80 |
 | roulette readback | the number painted under the ball and beside it, **40 of 40** read from the picture, both wheels, two rasters |
 | money wheel | every value, Fixed, 35 spins over 18 segments; the wheel turned 1, 7, 27 and 53 segments, the pegs and the clapper **bit-identical**; every one of 114 peg passages took energy, the median 1.46 J against the bearing's 0.058 J a segment; Random chi-square 65.1 over the segments (critical 90.6), 8.0 over the values (22.7); 14 of 14 read from the picture |
-| wheel files (not released) | 9 texts read as expected: markers, blank lines counted, LF, CRLF and CR, a BOM, UTF-16 LE and BE, Windows-1252, the seven emoji, the folding; 6 bad files (a PNG, control characters, empty, blank, over 1 MB, missing) refused with the reason and the Big Six kept; 1,500 lines capped at 1,000 values; a file named in Latin, Cyrillic and emoji read here, and its path converted to the UTF-16 a Windows open takes, matching the compiler's own |
-| wheel draw (not released) | In Order clockwise, so the clapper meets the lines in order; Random 24 different lines of 80, the same for a Seed, keeping its 24 when Segments goes to 25; over every Seed, which lines are drawn chi-square 24.7 and which lands first 27.9 (critical 58.4); Short File both ways; the cut at every size; through the plugin, six spins on one draw, Seed changing it and changing it back, an edited file read again with its lines in the same places |
-| wheel results (not released) | 128 plans on wheels of 2, 8, 12, 24, 37 and 54 from a file and the Big Six on 2 and 13, every Result: each at rest on the segment drawn, read under the clapper as painted; only marked segments win, and a file with no markers never does; Random chi-square under critical on every wheel; **C_P** bit-identical for 37, 48, 56 and 72 pegs; 6 s spins at warp 0.91–1.06 |
-| wheel geometry (not released) | 2, 8, 24 and 54 segments of awkward labels (34 W's, 20 eights, symbols, markers), from the pixels: each arc within 0.0051 rad of 2π/N; **no** ink in a neighbour's segment or within a divider and a pixel of one; the type 20–74 px tall at 1080p. Read under the clapper: 24 Fixed lines on wheels of 2 to 54, two rasters, 0 wrong |
+| wheel files | 9 texts read as expected: markers, blank lines counted, LF, CRLF and CR, a BOM, UTF-16 LE and BE, Windows-1252, the seven emoji, the folding; 6 bad files (a PNG, control characters, empty, blank, over 1 MB, missing) refused with the reason and the Big Six kept; 1,500 lines capped at 1,000 values; a file named in Latin, Cyrillic and emoji read here, and its path converted to the UTF-16 a Windows open takes, matching the compiler's own |
+| wheel draw | In Order clockwise, so the clapper meets the lines in order; Random 24 different lines of 80, the same for a Seed, keeping its 24 when Segments goes to 25; over every Seed, which lines are drawn chi-square 24.7 and which lands first 27.9 (critical 58.4); Short File both ways; the cut at every size; through the plugin, six spins on one draw, Seed changing it and changing it back, an edited file read again with its lines in the same places |
+| wheel results | 128 plans on wheels of 2, 8, 12, 24, 37 and 54 from a file and the Big Six on 2 and 13, every Result: each at rest on the segment drawn, read under the clapper as painted; only marked segments win, and a file with no markers never does; Random chi-square under critical on every wheel; **C_P** bit-identical for 37, 48, 56 and 72 pegs; 6 s spins at warp 0.91–1.06 |
+| wheel geometry | 2, 8, 24 and 54 segments of awkward labels (34 W's, 20 eights, symbols, markers), from the pixels: each arc within 0.0051 rad of 2π/N; **no** ink in a neighbour's segment or within a divider and a pixel of one; the type 20–74 px tall at 1080p. Read under the clapper: 24 Fixed lines on wheels of 2 to 54, two rasters, 0 wrong |
 | craps | every total 2–12, 44 throws: the faces on top of the dice **as drawn** add up to it; every throw reached the back wall, every die flat on the felt, none inside the other; the pass line through a scripted shooter; Win and Lose against every point, 84 of 84 |
 | lottery | 16 draws of 10 to 75 balls: the rack, left to right, shows the numbers drawn; the paint a permutation every time; every drawn ball rises up the tube; balls never overlap more than 1.75 mm (bound 3) nor leave the glass; Random chi-square 41.3 (critical 84.1) |
 | shower | a coin falling face on for 1.5 s within 0.009 of the closed form under quadratic drag (bound 0.019, g T dt); a tumbling chip keeps its angular momentum to 0.48% while its axis wobbles; 0.96 million contact steps, none added energy; **every one of 362 pieces judged**: 249 at rest (247 flat within 1°, 2 laid as they lay, steeper than the 16° gate), 75 gone off the frame or the table, 38 still rolling and none of those stuck; **Euler's disk**: the contact's rate within 6% of Ω² = 4 g / (r sin α) from 7° to 1.3° of lean, rising 2.5× |
@@ -302,7 +308,7 @@ machine shared with other builds, the range over two runs), 720p / 1080p / 4K:
 slots **0.5 / 0.8 / 1.7–1.8 ms**; roulette **2.0–2.2 / 4.1–4.2 / 5.3–5.4**; money
 wheel **0.3 / 0.7 / 1.4**; craps **1.2–1.3 / 2.2–2.3 / 2.5–2.6**; lottery, 49 balls,
 **0.6–0.7 / 1.2–1.5 / 3.4**; a constant shower **1.0 / 1.2 / 2.3**. A money wheel of 54
-from a file of 80 long lines (not released) **0.4–0.9 / 0.5–0.7 / 1.4**, the Big Six's cost
+from a file of 80 long lines **0.4–0.9 / 0.5–0.7 / 1.4**, the Big Six's cost
 within the bench's noise (three runs each against v0.1.1's harness). Up to 1080p every 3D pixel takes four rays; above it only the pixels on an
 edge do. A play is planned on a worker, so it starts a frame or two after the
 press: craps **1 ms**, roulette **13**, the lottery **47** (49 balls), the money
@@ -310,11 +316,11 @@ wheel **55** (worst 82).
 
 What **isn't** verified yet:
 
-- **Wheel files haven't been anywhere near Resolume** (they're not released either). Nor has
-  a Windows machine opened one from a folder with a non-ASCII name: that path is checked here
-  only as far as converting it to UTF-16.
-- **Two plays in Arena on a Mac, and a Windows check that never presses Play.**
-  No game has been played on Windows yet. Nothing here has met Arena's transport
+- **Wheel files haven't been in Resolume on a Mac**, only in Arena on Windows, on software
+  rendering. Nor have I reopened a saved composition with the renumbered controls: Arena
+  stores values by name, so it should restore them, but I haven't watched it do so.
+- **Two plays in Arena on a Mac, and money-wheel spins on Windows.**
+  No other game has been played on Windows yet. Nothing here has met Arena's transport
   (whether `barPhase` is a usable downbeat hasn't been measured anywhere in the
   fleet, and Land On trusts it), the order Arena restores parameters in from a saved
   composition, or any GPU but mine.

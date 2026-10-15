@@ -200,7 +200,7 @@ back, eight steps round -- at up to 2.6 cm/s instantaneously while going nowhere
 (0.09 thousandths of a frame in half a second), so the stillness test never passes
 and it is never stamped. It ages out with the rest. Seen once in 306 pieces of a dense pile.
 
-## Wheel files (jackpot#1, not released)
+## Wheel files (jackpot#1, v0.2.0)
 
 VJPandaAU (a working VJ, on Windows 11) asked for their own values on the money
 wheel: a number of segments, a text file of values, N of them drawn at random or the

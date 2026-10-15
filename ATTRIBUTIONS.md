@@ -26,6 +26,14 @@ Copyright: Stoatworks Labs
 
 source/Transport.h — the bar phase kept from Resolume's BPM and re-aligned to the host's bar phase, and the next beat or bar at least a given time away — is honeydew's.
 
+### Opening a file by its UTF-8 path on Windows — Stoatworks radar
+
+<https://github.com/stoatworks-labs/radar>  
+Licence: MIT  
+Copyright: Stoatworks Labs
+
+source/FileBytes.{h,cpp} is radar's ReadFileBytes and its strict Utf8ToUtf16 (source/SpriteImage.cpp), copied for the Wheel File and Font File; the size cap is now the caller's, and a size-and-date stamp was added so a path set again is re-read only when the file changed.
+
 ### Ray–primitive intersections — Inigo Quilez
 
 <https://iquilezles.org/articles/intersectors/>  

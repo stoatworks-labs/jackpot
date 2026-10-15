@@ -14,11 +14,11 @@ casino where the house does as it's told.
 *Three sevens on the line, the banner, the meters counting the win in, and the shower a jackpot
 sets off. Rendered by the plugin's offline harness rather than captured from Resolume.*
 
-> **Before you rely on this:** released at **v0.1.1**, and still early days. It's been loaded
+> **Before you rely on this:** released at **v0.2.0**, and still early days. It's been loaded
 > into Resolume Arena 7.27.1 on a Mac and played there: a slot jackpot and a roulette spin, each
 > landing as asked, with the shower. On Windows, both plugins load, register and render in
 > Resolume Arena 7.27.1, with every control as declared, on a machine with software rendering
-> and no GPU; no game was played there. Everything else is measured by a harness that drives
+> and no GPU; the money wheel was played there (below), no other game. Everything else is measured by a harness that drives
 > the real plugin classes in a headless GL context. Every number of both roulette wheels, every
 > value of the money wheel and every craps total was played, and each came to rest as asked; the
 > harness then reads the result **out of the rendered picture** for the slot machine, the
@@ -31,10 +31,16 @@ sets off. Rendered by the plugin's offline harness rather than captured from Res
 > shower kept falling, and the floor was clear 15 s after Shower Off. **Play**'s place at the top of
 > the panel is measured by the harness only. Try it on a spare layer before you put it in a show.
 >
-> **Wheel files** (Segments, Wheel File, Lines and Short File on the money wheel) are new since
-> v0.1.1 and **not released yet**. They're measured by the harness only: **I haven't loaded them
-> into Resolume yet**, on a Mac or on Windows. With no file and Segments at 54 the wheel draws what
-> v0.1.1 drew, to the byte.
+> **Wheel files** (Segments, Wheel File, Lines and Short File on the money wheel) are new in
+> v0.2.0. They're measured by the harness, and the fleet's gate passed 19 of 19 with them in
+> Resolume Arena 7.27.1 on Windows. There (software rendering, an MSVC build of this code on the
+> lab machine, 2026-10-15) wheel files loaded from a folder named `räder ✓ 🎰`, and as Notepad saves
+> them in UTF-8 with a BOM, "Unicode" (UTF-16) and ANSI; the emoji showed as the reel art; a PNG
+> renamed to .txt left the Big Six, and the log said why; a file edited and chosen again was read
+> again; a Jackpot spin landed on the `*` segment with its board and shower, Fixed Number 3 on the
+> file's line 3, and Segments changed mid-spin left that spin's result up before painting the new
+> wheel. Not yet on a Mac. With no file and Segments at 54 the
+> wheel draws what v0.1.1 drew, to the byte.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human author.
 
@@ -214,13 +220,13 @@ and may rock back off the last peg.
 
 - **Clapper:** how stiff the leather is. Stiffer takes more from each peg and stops the wheel
   sooner, so the operator pulls it harder.
-- **Segments** (new since v0.1.1, not released yet): 2 to 54, default 54. With no wheel file, a
+- **Segments** (new in v0.2.0): 2 to 54, default 54. With no wheel file, a
   smaller Big Six: the joker first, the logo opposite it from four segments up, and the money
   values between them in the Big Six's order.
-- **Wheel File** (new, not released): a `.txt` of your own values. See below.
-- **Lines** (new, not released): *In Order* or *Random* (the default), for a file with more lines
+- **Wheel File** (new in v0.2.0): a `.txt` of your own values. See below.
+- **Lines** (new in v0.2.0): *In Order* or *Random* (the default), for a file with more lines
   than segments.
-- **Short File** (new, not released): *Repeat* (the default) or *Fewer Segments*, for a file with
+- **Short File** (new in v0.2.0): *Repeat* (the default) or *Fewer Segments*, for a file with
   fewer lines than segments.
 
 A wheel of fewer segments keeps about the Big Six's 54 pegs, two or more to a segment (37 to 72
@@ -228,7 +234,7 @@ in all), so it ticks and slows as the big one does, and comes to rest on time th
 
 ### Wheel files
 
-*New since v0.1.1 and not released yet* ([jackpot#1](https://github.com/stoatworks-labs/jackpot/issues/1)).
+*New in v0.2.0* ([jackpot#1](https://github.com/stoatworks-labs/jackpot/issues/1)).
 The money wheel can wear your own values. Write them in any text editor, one a line, save the file
 as `.txt`, and choose it with **Wheel File**:
 
@@ -448,7 +454,7 @@ shared with other builds:
 | craps | 1.2–1.3 ms | 2.2–2.3 ms | 2.5–2.6 ms |
 | lottery, 49 balls | 0.6–0.7 ms | 1.2–1.5 ms | 3.4 ms |
 | a constant shower | 1.0 ms | 1.2 ms | 2.3 ms |
-| money wheel, 54 from a file (not released) | 0.4–0.9 ms | 0.5–0.7 ms | 1.4 ms |
+| money wheel, 54 from a file | 0.4–0.9 ms | 0.5–0.7 ms | 1.4 ms |
 
 Up to 1080p every pixel of roulette, craps and the lottery takes four rays; above it only the
 pixels on an edge do. Nothing was timed inside Resolume.
@@ -474,7 +480,7 @@ a little slower and holds the dice before it, but no longer than that.
 **My font changed on another computer.** The font isn't installed there, so the text uses the
 built-in face, and Font Name still holds the name.
 
-**My wheel file didn't take** (not released yet). The wheel shows the Big Six when the file is
+**My wheel file didn't take.** The wheel shows the Big Six when the file is
 missing, isn't text or is empty, and the log says which. If you've edited the file since, choose it
 again: it's read when it's chosen. A segment that comes out blank had nothing the type can print
 (an emoji that isn't one of the seven, say).
@@ -522,20 +528,19 @@ group; Random fair by chi-square; every game stopping at Spin Time and on the be
 by the effect where it must be. Every check also runs against a model that's wrong on purpose and
 must fail it, and a sweep fails if any control does nothing.
 
-**Wheel files (new since v0.1.1, not released yet)**, measured by the same harness and nowhere
-else: what a file becomes, in every encoding above, and that a bad one falls back and says why; a
+**Wheel files (new in v0.2.0)**, measured by the same harness: what a file becomes, in every encoding above, and that a bad one falls back and says why; a
 path in Latin, Cyrillic and emoji read on the Mac, and turned into the UTF-16 a Windows open takes;
 In Order, Random and Short File, and the draw holding from spin to spin; every Result on wheels of
 2 to 54 segments, at rest on the segment it asked for and read back out of the picture; only the
 marked segments winning; equal segments, and every label and symbol inside its own, from the
-pixels; and at the defaults, every frame of every game the same as v0.1.1's to the byte. Not loaded
-into Resolume on either platform.
+pixels; and at the defaults, every frame of every game the same as v0.1.1's to the byte. In Resolume Arena
+on Windows they did what the box at the top describes; not yet on a Mac.
 
 **Assumed, or not verified:**
 
-- **Two plays in one Resolume, on one Mac, and none on Windows.** The Over effect, the money wheel,
+- **Two plays in one Resolume on one Mac, and money-wheel spins on Windows.** The Over effect,
   craps and the lottery, Land On against Resolume's tempo, and a saved composition's restore
-  haven't been tried in a host, and nor has any play on Windows or on a GPU there.
+  haven't been tried in a host, and nor has any other play on Windows, or a GPU there.
 - **Play's place at the top of the panel (v0.1.1)** is measured only by the harness. That Resolume
   draws Game and Play outside the groups follows from how it groups parameters; I haven't looked
   at it. The pile's clearing was run in Resolume Arena 7.27.1 on Windows (software rendering, a build of the 0.1.1 code made with MSVC on the lab machine, 2026-10-12), with Shower Only, not after a game.
