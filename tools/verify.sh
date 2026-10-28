@@ -74,6 +74,16 @@ step "Shaders"
 tools/glslc.sh || fail "a shader does not compile"
 
 #---------------------------------------------------------------------------
+step "Browser demo: its copies are the plugin's"
+#---------------------------------------------------------------------------
+# demo/ carries copies that drift quietly: the GLSL (shaders.js, and the
+# program list), the plugin's C++ compiled to jackpot-core.wasm (checked by
+# the hashes of its inputs, as rebuilding needs emscripten), and the example
+# wheel file. A change to source/ fails here until demo/tools/build-wasm.sh
+# has been rerun.
+python3 demo/tools/check_shaders.py || fail "the browser demo has drifted from the plugin (demo/tools/check_shaders.py --write, demo/tools/build-wasm.sh)"
+
+#---------------------------------------------------------------------------
 step "Submodule"
 #---------------------------------------------------------------------------
 if [[ ! -f external/ffgl/CMakeLists.txt ]]; then
