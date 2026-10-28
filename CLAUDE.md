@@ -60,6 +60,8 @@ shader's mirrored constants, or the harness's readbacks.
 - What CI runs: `--offline` (the checks that need no GL context, and their
   negative controls; says loudly that the pixel checks were not run) and
   `tools/glslc.sh`.
+- The browser demo's copies (GLSL, the .wasm's inputs, the example wheel file):
+  `python3 demo/tools/check_shaders.py` (in verify.sh).
 - No dead controls: `python3 tools/sweep.py` (50 parameters, both plugins;
   `--no-context` empties the context table to show what it holds up).
 - Cost: `--bench` (720p/1080p/4K for every game; the planners' ms).
@@ -113,9 +115,31 @@ shader's mirrored constants, or the harness's readbacks.
 - Public at github.com/stoatworks-labs/jackpot: a `v*` tag runs `release.yml`, and
   CI runs because the repo is public (the fleet's rule for Actions minutes).
 
+## Browser demo
+- `demo/` is https://jackpot-demo.stoatworks-labs.com (Worker `jackpot-demo`, a ROUTE on a
+  proxied AAAA 100:: record -- the zone's custom domains are full; deleting the record takes
+  the page dark with a green deploy). `deploy.yml` redeploys it on a push to main; by hand:
+  `cf-run npx wrangler deploy`.
+- It runs the plugin's C++ (Jackpot.cpp and everything it calls, plus the FFGL SDK's
+  plugin/param/shader classes) as `demo/jackpot-core.wasm`, COMMITTED. **After changing
+  anything under `source/`, run `demo/tools/build-wasm.sh`** (emscripten: `brew install
+  emscripten`); verify.sh fails until you do (`demo/wasm/inputs.sha256`).
+- `demo/shaders.js` is GENERATED: `python3 demo/tools/check_shaders.py --write` (it also
+  holds the plugin's `shaders::Programs()` list). `demo/showcase.txt` is
+  `tools/fixtures/showcase.txt`, copied; check_shaders.py holds it byte for byte.
+- The page's own parts: `demo/wasm/glue.cpp` (the host), `demo/wasm/gl_shim.cpp`
+  (glShaderSource, PROGRAM_POINT_SIZE), `demo/plugin.js` (panel, units, files, the Example
+  wheel file, the status line).
+- Against jptest, frame for frame: serve `demo/` (any static server), then
+  `python3 demo/tools/crosscheck/crosscheck.py --jptest build/jptest --url http://127.0.0.1:PORT/`
+  (Chrome, headless, over a pipe). Results must match; pictures are measured (AGENTS.md).
+- `demo/vendor/` is the shared kit: never edit it, re-vendor with
+  `stoatworks-backend/resolume-demo/sync.sh`.
+
 ## Not done yet
 - In Resolume: two plays on this Mac (2026-10-09), and the Windows gate (19/19 at v0.2.0,
-  2026-10-15; no play pressed); no OpenFX port, no browser demo, no presets. The 0.1.1 pile fix
+  2026-10-15; no play pressed); no OpenFX port, no presets. The browser demo runs this code
+  in WebGL2, not in Resolume, and verifies nothing about a host. The 0.1.1 pile fix
   (jackpot#3) was run in Arena on Windows, 2026-10-12 (Shower Only); Play's place (jackpot#2) has not been looked at.
 - **Wheel files (jackpot#1, v0.2.0)**: in Arena on Windows only, 2026-10-15 (an MSVC build:
   the hand checks in the README's Status, and plugin-bench's gate 19/19 with

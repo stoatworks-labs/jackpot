@@ -21,6 +21,15 @@ the prize to go to table six.
 and the shower a jackpot sets off. Rendered by the plugin's offline harness
 (`jptest`) rather than captured from Resolume.</sub>
 
+**[Try it in your browser](https://jackpot-demo.stoatworks-labs.com)**: both plugins and
+every control, running the plugin's own C++ (the five games' planners and physics, the
+shower, wheel files, fonts, the plugin class itself) compiled unmodified to WebAssembly, and
+its own GLSL in WebGL2. It isn't the plugin in Resolume, though: plays are planned on the
+page's thread, so the frame after you press Play waits for the physics (the money wheel takes
+longest), there are no installed fonts and no host tempo for Land On, and the effect runs on a
+generated clip. If you haven't got a wheel file to hand, there's an example one to load. Have
+a read of [what the page itself says it doesn't reproduce](https://jackpot-demo.stoatworks-labs.com).
+
 <!-- downloads:start -->
 
 ## Download
@@ -259,7 +268,8 @@ the shower raining; switched to Roulette, the ball ran the track and came to res
 plays as asked and no warning or error. I didn't try the Over effect, the other three
 games, Land On against Arena's transport or a saved composition there. `oxbow
 probe` reads the bundles as a host does and `oxbow selftest` renders through each. No
-OpenFX port, no browser demo.
+OpenFX port. The [browser demo](https://jackpot-demo.stoatworks-labs.com) runs this code,
+not Resolume, so it adds nothing to the list above.
 
 **In Resolume Arena 7.27.1 on Windows** (win-lab, Mesa llvmpipe, no GPU,
 2026-10-15, an MSVC build of the v0.2.0 code; v0.1.0's CI build passed the same gate on

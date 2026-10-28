@@ -109,7 +109,8 @@ painted; a die's S is a rotation of the solid onto itself.
   `--names` holds Play ungrouped and every group one run of ids.
 - **No presets, no audio trigger, no history board, no pay table on screen** in
   0.1.0; the spec's out-of-scope list (cards, pachinko, OpenFX, browser demo, Arena
-  gate) stands.
+  gate) stands. (A browser demo came later, in the 2026-10-28 sweep: see "The browser
+  demo".)
 
 ## Meeting Spin Time, honestly
 
@@ -622,10 +623,66 @@ Assumed or chosen, not measured:
 - That Resolume's `SetBeatInfo` bar phase is a usable downbeat (fleet-wide unknown).
 - That Arena's FFGL clock behaves as boreal measured it.
 
+## The browser demo (2026-10-28)
+
+`demo/` is <https://jackpot-demo.stoatworks-labs.com>, built to the fleet's
+`resolume-demo` kit rules in the 2026-10-28 demo sweep, on polyhedral's recipe: it
+**runs the plugin rather than a port of it**. Nothing in the CPU half was too big to
+carry, because none of it was ported.
+
+- **`jackpot-core.wasm` is the plugin's C++, unmodified**: every .cpp of
+  `jackpot_core` (Jackpot.cpp and all it calls: the five planners, the shower,
+  polyhedral's engine, WheelFace, FileBytes, SymbolArt, Typeface, Controls,
+  Common, Shaders, Diag) plus the FFGL SDK's CFFGLPluginManager/CFFGLPlugin,
+  FFGLLog, FFGLShader, FFGLScreenQuad and scoped bindings, built by
+  `demo/tools/build-wasm.sh` at CMakeLists.txt's optimisation levels. Left out:
+  SourcePlugin.cpp and EffectPlugin.cpp. `-D__linux__` on the SDK includers only
+  (FFGLPlatform.h stops on any other platform). All eight programs of
+  `shaders::Programs()` compile in WebGL2 as they are, after the kit's `port()`;
+  nothing in the GLSL needed changing (checked on ANGLE Metal and SwiftShader).
+- **The page's parts**: `demo/wasm/glue.cpp` is the host (constructs the plugin,
+  reads its declarations through the SDK's host getters -- the panel is built from
+  them -- forwards parameters, SetTime and ProcessOpenGL, and reads the harness's
+  own accessors for the status line). `demo/wasm/gl_shim.cpp` replaces
+  glShaderSource (the page REQUIRES the text to equal one of its checked programs,
+  then applies `port()`) and glEnable/glDisable/glIsEnabled (GL_PROGRAM_POINT_SIZE,
+  which GLState.h saves and restores, does not exist in WebGL2). Diag's log goes to
+  the in-memory file system through its `POLYHEDRAL_LOG_DIR` override (the name
+  came with polyhedral's code).
+- **What is not the plugin, and the page says so**: no threads, so
+  `SetSynchronousForTest(true)` plans on the page's thread and the frame after a
+  press waits (the status line prints how long: in Chrome on this Mac, shared with
+  other builds, about 1 ms slots, 12 roulette, 6 craps, 130 the lottery and
+  290-530 ms the money wheel); no SetBeatInfo, so Land On's Beat and Bar run on
+  Transport.h's own 120 BPM; no installed fonts; Wheel File and Font File are paths
+  in emscripten's in-memory file system. The Example button loads
+  `demo/showcase.txt`, which check_shaders.py holds to `tools/fixtures/showcase.txt`.
+- **Checked**: `demo/tools/check_shaders.py` (verify.sh) holds shaders.js's pieces
+  and program list to Shaders.cpp, fails when any input of the .wasm has changed
+  since the build (`demo/wasm/inputs.sha256`), and holds the example file. Negative
+  controls run by hand: a digit of PI in kCommon, a comment in Craps.h, a byte on
+  the example and a program list edited in shaders.js each failed it; a shaders.js
+  edited by one digit made the page refuse to start ("not this page's checked
+  copy").
+- **Compared with jptest** (`demo/tools/crosscheck/crosscheck.py`: the served
+  .wasm driven in headless Chrome through the Rig's own calls on the 60 fps clock,
+  SetClockScaleForTest(1), against `jptest --film`). Eight plays at 640x360 --
+  slots jackpot, five reels Random Seed 3, roulette Fixed 17, money wheel Jackpot,
+  showcase.txt on 12 In Order Fixed 5, craps Fixed 11, lottery Random, Shower Only
+  -- showed the same result on both, against jptest built with and without fused
+  multiply-adds. Slots, roulette, the money wheel and craps took the same paths
+  (the same warps to six places) and their frames agreed within 2/255 on 99.6% or
+  more of the pixels on ANGLE Metal (worst pixel 24/255, roulette), 99.5% on
+  SwiftShader (worst 105/255, an edge). The lottery's path parted within the first
+  second (warp 2.05 here; jptest 2.24 fused, 2.12 unfused: the plugin's own two
+  builds disagree too) and drew the same six; the shower's spray differed in a few
+  pieces (0.06% of pixels by frame 149 on Metal). That is AGENTS.md's "trajectories
+  are not promised identical across architectures", measured.
+
 ## Not done
 
-In Resolume only on this Mac, two plays (README "Status"); no OpenFX port, browser
-demo or presets. The 0.1.1 fixes (the pile, jackpot#3; Play at the top, jackpot#2)
+In Resolume only on this Mac, two plays (README "Status"); no OpenFX port or
+presets. The browser demo (above) runs this code in a browser, not in a host. The 0.1.1 fixes (the pile, jackpot#3; Play at the top, jackpot#2)
 are measured by the harness. The pile was also run in Resolume Arena 7.27.1 on Windows (software rendering, a build of the 0.1.1 code made with MSVC on the lab machine, 2026-10-12):
 Shower Only on Always, chips then coins, the chips gone about 14 s after the switch, the floor
 clear 15 s after Shower Off, the shower still falling. Play outside the closed Game group has not

@@ -568,6 +568,9 @@ in your browser. In the effect, Mix comes after it.
 
 - Project page: [stoatworks-labs.com/software/jackpot](https://stoatworks-labs.com/software/jackpot/)
 - Source: [github.com/stoatworks-labs/jackpot](https://github.com/stoatworks-labs/jackpot)
+- Browser demo: [jackpot-demo.stoatworks-labs.com](https://jackpot-demo.stoatworks-labs.com),
+  both plugins and every control in your browser, running the plugin's own code. It isn't
+  Resolume: the page lists what it doesn't reproduce.
 
 ## Reporting something
 
