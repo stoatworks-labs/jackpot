@@ -21,6 +21,8 @@ shader's mirrored constants, or the harness's readbacks.
 - List parameters: `./build/jptest --list` (`--over` for the effect's)
 - Set anything by name, text and file parameters too:
   `./build/jptest --set "Game=Roulette" --set "Result=Fixed" --set "Fixed Number=17"`
+  An option takes its element's name or its index, and is set to that element's
+  value as a host does: Font's are `FontValue`, made from the family names.
 - Press Play on frame N: `--play N` (repeatable; default frame 0). `--frames N`
   renders exactly N frames instead of one play to rest.
 - Film: `./build/jptest --film 600 --size 1280x720 --play 10 --set "Game=Craps" | ffmpeg -f rawvideo -pix_fmt rgba -s 1280x720 -r 60 -i - -c:v libx264 -pix_fmt yuv420p craps.mp4`

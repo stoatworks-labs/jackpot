@@ -228,19 +228,32 @@ line, chosen with **Wheel File**.
   Zoom.
 - **Over only:** Mix.
 
-**Type the font's name if the composition is going anywhere.** Arena saves a
-family picked from the Font dropdown as its position in *this* machine's list,
-which is a different font on the next rig. The plugin writes the family into Font
-Name when you pick, but Arena keeps its own copy of every control and never reads
-that back, so the saved composition holds the position and no name at all. A name
-you type into Font Name is saved as the name, and it wins over the list when the
-composition opens; once you've typed one, change font by typing another.
-Polyhedral works the same way, trap included.
+**Fonts travel by name, from the next release**, as in polyhedral. Each family in
+the Font dropdown carries a number made from its name rather than its place in
+*this* machine's list, and that number is what Arena saves, so a composition finds
+the same family on a rig with a different set of fonts. On one without it, the text
+falls back to the built-in face with a warning in the log, and the composition keeps
+the choice for the next machine that has it. Font Name is the same choice typed, and
+wins over the list when the composition opens; once you've typed one, change font by
+typing another. **v0.2.0 saves a picked family as its place in the list**, which is
+a different font on the next rig, and Arena never reads back the name the plugin
+writes into Font Name: with v0.2.0, type the name for a composition that's going
+anywhere. A composition saved by v0.2.0 or earlier still opens as it did, its place
+read the way those releases read it: names' numbers start at 65,536, so a place
+can't be mistaken for one. Arena's list will show nothing picked for it, as for any
+number none of its entries has; pick the font again and save, and from then on it
+goes by name.
 
 ## Status
 
 **v0.2.0, 2026-10-15, and still early days** (v0.1.0 came out on 2026-10-09, v0.1.1 on 2026-10-12). User guide:
 [stoatworks-labs.com/software/jackpot/guide](https://stoatworks-labs.com/software/jackpot/guide/).
+
+**On main, not released yet:** a font picked from the list is saved as a number
+made from its name, not its place in the list (Controls above), so it survives a
+move to a machine with other fonts, and a composition saved by v0.2.0 or earlier
+opens as it did. `jptest --fonts` checks it; Jackpot's build of it hasn't been in
+Arena.
 
 **New in v0.1.1:** the shower's pile clears itself (jackpot#3: every piece
 fades 12 s after it is thrown, the oldest go early when the pool is nearly full, pieces
@@ -312,7 +325,7 @@ What's measured, on this Mac:
 | pile | chips, three presses of Shower Now, coins, three more, then quiet: **0 of 1,223** pieces left 30 s after the last (0.1.0: 743 of 1,080, 363 of them chips); Always at Amount 1.0 for a minute, **4,000 of 4,000** thrown in its last 10 s (0.1.0: 234), and still 4,000 after twelve minutes in a longer run; no piece ever past the table's edge in z (0.1.0: 21.9 frame heights past); the table flat once the pile has gone and after Pile off and on (0.1.0: 0.029 and 0.049 left) |
 | duration | every game, Spin Time 3, 6 and 12 s: at rest at Spin Time, moving a frame before, still after; the money wheel also on 2, 8, 24, 36 and 37 segments (54, 56, 48, 72 and 37 pegs); Land On, 64 waits each ending on a beat or bar boundary |
 | Over | the clip (premultiplied, alpha and all) untouched where there is no game and everywhere at Mix 0, to 1.2×10⁻⁷ |
-| the rest | defaults, names (unique as Arena addresses them, no '/'; Game and Play outside every group, each group one run of ids), determinism (the same seed is the same play to the bit), resize mid-shower, fonts by name, missing and by file, credits and the craps point carried between plays, the roulette ring never jumping at a Play, and a slot pull mid-spin carrying the reels on from where they are |
+| the rest | defaults, names (unique as Arena addresses them, no '/'; Game and Play outside every group, each group one run of ids), determinism (the same seed is the same play to the bit), resize mid-shower, fonts by name, by the list (values made from the names, not the places), missing and by file, credits and the craps point carried between plays, the roulette ring never jumping at a Play, and a slot pull mid-spin carrying the reels on from where they are |
 | tables | the dice's face loops, groups and labels identical from arm64 with fused multiply-adds, arm64 without, and x86_64 (polyhedral's check) |
 | negative controls | **37** deliberately wrong models, **all 37** detected (13 of them for the wheel files) |
 | mutants | **17** one-character changes (four GLSL, thirteen C++), **all 17** caught |
@@ -339,10 +352,11 @@ What **isn't** verified yet:
   (whether `barPhase` is a usable downbeat hasn't been measured anywhere in the
   fleet, and Land On trusts it), the order Arena restores parameters in from a saved
   composition, or any GPU but mine.
-- **A picked font is saved as a list position, not a name.** That was found with
-  Knockout, which does fonts the same way, saved and reopened in Arena 7.28.1 on a
-  Mac. Jackpot hasn't been through that test itself, but Arena treats every
-  plugin's controls the same way. Type the name (see Controls above).
+- **The font fix rests on Knockout's test.** Knockout did fonts the way v0.2.0
+  does, and Arena 7.28.1 on a Mac saved a picked one as its place in the list. Its
+  fix, the number made from the name that main now has too, came back as the same
+  family in Arena on a different set of fonts. Jackpot's own build of it is checked
+  by `jptest --fonts` only.
 - **The physics is my own, checked but not fitted.** The roulette ball is a point
   carrying its radius on a profile of cones, with one friction for each surface;
   the clapper is a spring that straightens at a third of its stiffness; the

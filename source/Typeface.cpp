@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unordered_set>
 
 #include "Diag.h"
 #include "FileBytes.h"
@@ -417,6 +418,62 @@ int FindFontByFamily( const std::string& family )
 		if( Lowered( fonts[ i ].family ) == wanted )
 			return static_cast< int >( i );
 	}
+	return -1;
+}
+
+std::vector< uint32_t > FontValues( const std::vector< std::string >& names )
+{
+	std::vector< uint32_t > values;
+	std::unordered_set< uint32_t > taken;
+	for( const std::string& name : names )
+	{
+		uint32_t hash = 2166136261u;
+		for( char c : Lowered( name ) )
+			hash = ( hash ^ static_cast< unsigned char >( c ) ) * 16777619u;
+		uint32_t value = ( ( hash >> 24 ) ^ hash ) & 0xFFFFFFu;
+		if( value < kPositionValues )
+			value += kPositionValues;
+		while( !taken.insert( value ).second )
+			value = value == 0xFFFFFFu ? kPositionValues : value + 1;
+		values.push_back( value );
+	}
+	return values;
+}
+
+namespace
+{
+const std::vector< uint32_t >& InstalledValues()
+{
+	static const std::vector< uint32_t > values = [] {
+		std::vector< std::string > names;
+		for( const FontFile& font : InstalledFonts() )
+			names.push_back( font.family );
+		return FontValues( names );
+	}();
+	return values;
+}
+} // namespace
+
+float FontValue( int font )
+{
+	const std::vector< uint32_t >& values = InstalledValues();
+	if( font < 0 || font >= static_cast< int >( values.size() ) )
+		return 0.0f;
+	return static_cast< float >( values[ static_cast< size_t >( font ) ] );
+}
+
+int FindFontByValue( float value )
+{
+	if( !( value >= 0.0f ) )
+		return -1;
+	const long wanted                     = std::lround( value );
+	const std::vector< uint32_t >& values = InstalledValues();
+	//A position from a composition v0.2.0 or earlier saved, read as they read one.
+	if( wanted < static_cast< long >( kPositionValues ) )
+		return static_cast< int >( std::min( wanted, static_cast< long >( values.size() ) ) ) - 1;
+	for( size_t i = 0; i < values.size(); ++i )
+		if( static_cast< long >( values[ i ] ) == wanted )
+			return static_cast< int >( i );
 	return -1;
 }
 

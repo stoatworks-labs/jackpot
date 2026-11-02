@@ -395,13 +395,17 @@ with its age, within about twelve seconds. The twelve seconds are fixed, not a c
   winner.
 - **Display:** the slot machine's banner and the other games' result board, on or off.
 - **Font**, **Font File**, **Font Name:** the type on the meters, the banner, the layout and the
-  numbers: *Built-in* (the same on every machine), any installed font, or a font file. **Type the
-  name if the composition is going anywhere:** Arena saves a family picked from the Font list as
-  its position in this machine's list, which means a different font on another computer. Jackpot
-  writes the family into Font Name when you pick, but Arena keeps its own copy of every control
-  and never reads that back, so the name it writes is never saved. A name you type into Font Name
-  is saved as the name, and it wins over the list when the composition opens. Once you've typed
-  one, change font by typing another: the typed name is the one that comes back.
+  numbers: *Built-in* (the same on every machine), any installed font, or a font file. **Fonts
+  travel by name, from the next release:** the list's position means a different font on another
+  computer, so each family in it carries a number made from its name instead, and that number is
+  what Arena saves. On a machine without the font the text uses the built-in face, and the
+  composition keeps the choice for one that has it. A name typed into Font Name is saved too, and
+  wins over the list when the composition opens, so once you've typed one, change font by typing
+  another. **In v0.2.0 a picked font is saved as its position**, and Arena never reads back the
+  name Jackpot writes into Font Name: with v0.2.0, type the name for a composition that's going
+  anywhere. A composition saved by v0.2.0 or earlier opens in the next release just as it did,
+  the position read the old way, though Arena's list shows nothing picked for it. Pick the font
+  again and save, and from then on it travels by name.
 - **Light Angle:** where the key light comes from, round the scene (roulette, craps, the lottery
   and the shower).
 - **Tilt:** how high the camera looks from, 20 degrees to straight down (roulette, craps and the
@@ -481,10 +485,10 @@ it six seconds or more.
 **The dice are in slow motion.** Spin Time is longer than a throw. The plugin plays the throw up to
 a little slower and holds the dice before it, but no longer than that.
 
-**My font changed on another computer.** If you picked it from the Font list, the composition
-saved its place in this machine's list, and that place holds a different font over there. Type the
-family into Font Name and save the composition again. If you typed it, the font isn't installed
-there, so the text uses the built-in face, and Font Name still holds the name.
+**My font changed on another computer.** The font isn't installed there, so the text uses the
+built-in face, and the composition still holds your choice for a machine that has it. In v0.2.0 a
+font picked from the list is saved as its place in the list, which holds a different font over
+there: type the family into Font Name and save the composition again.
 
 **My wheel file didn't take.** The wheel shows the Big Six when the file is
 missing, isn't text or is empty, and the log says which. If you've edited the file since, choose it
@@ -547,10 +551,9 @@ on Windows they did what the box at the top describes; not yet on a Mac.
 - **Two plays in one Resolume on one Mac, and money-wheel spins on Windows.** The Over effect,
   craps and the lottery, Land On against Resolume's tempo, and a saved composition's restore
   haven't been tried in a host, and nor has any other play on Windows, or a GPU there.
-- **A font picked from the list is saved as its position, not its name.** That was found with
-  Knockout, which handles fonts the same way, saved and reopened in Arena 7.28.1 on a Mac.
-  Jackpot hasn't been through that test itself, but Arena treats every plugin's controls the same
-  way.
+- **Fonts travelling by name rests on Knockout's test, not Jackpot's.** Knockout gives its fonts
+  the same numbers, and Arena 7.28.1 on a Mac saved one and reopened it on a different set of
+  fonts as the same family. Jackpot's own build of it hasn't been in Arena yet.
 - **Play's place at the top of the panel (v0.1.1)** is measured only by the harness. That Resolume
   draws Game and Play outside the groups follows from how it groups parameters; I haven't looked
   at it. The pile's clearing was run in Resolume Arena 7.27.1 on Windows (software rendering, a build of the 0.1.1 code made with MSVC on the lab machine, 2026-10-12), with Shower Only, not after a game.

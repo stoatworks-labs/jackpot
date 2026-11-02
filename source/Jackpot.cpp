@@ -242,12 +242,14 @@ JackpotPlugin::JackpotPlugin( bool effect ) : isEffect( effect )
 	boolean( PT_DISPLAY, "Display" );
 
 	//The font list is scanned here, once per process: SetParamElementInfo is
-	//how a host learns a dropdown's contents (downpour's note).
+	//how a host learns a dropdown's contents (downpour's note). Each family's
+	//element carries FontValue, not its position: Arena saves the value, and
+	//a position is a different family on the next rig.
 	const std::vector< FontFile >& fonts = InstalledFonts();
 	SetOptionParamInfo( PT_FONT, "Font", static_cast< unsigned int >( fonts.size() + 1 ), 0.0f );
 	SetParamElementInfo( PT_FONT, 0, "Built-in", 0.0f );
 	for( size_t i = 0; i < fonts.size(); ++i )
-		SetParamElementInfo( PT_FONT, static_cast< unsigned int >( i + 1 ), fonts[ i ].family.c_str(), static_cast< float >( i + 1 ) );
+		SetParamElementInfo( PT_FONT, static_cast< unsigned int >( i + 1 ), fonts[ i ].family.c_str(), FontValue( static_cast< int >( i ) ) );
 	SetFileParamInfo( PT_FONT_FILE, "Font File", { "ttf", "otf", "ttc", "otc" }, "" );
 	SetParamInfo( PT_FONT_NAME, "Font Name", FF_TYPE_TEXT, "" );
 	standard( PT_LIGHT_ANGLE, "Light Angle" );
@@ -862,11 +864,11 @@ void JackpotPlugin::ResolveFont()
 		loaded = true;
 	else
 	{
-		//The dropdown stores an INDEX into this machine's font list; a name set
-		//in Font Name wins over it, here and when a composition restores both.
-		//Arena saves only a TYPED name: it never reads back the one written
-		//below, so a picked family is saved as its index alone (seen in
-		//Knockout, Arena 7.28.1).
+		//The dropdown holds a family's FontValue, made from its name, and
+		//Arena saves that: it never reads back the Font Name written below,
+		//so a picked family travels as its value alone (Knockout, Arena
+		//7.28.1). A name set in Font Name wins over it, here and when a
+		//composition restores both.
 		int chosen = -1;
 		if( nameSet )
 		{
@@ -876,7 +878,17 @@ void JackpotPlugin::ResolveFont()
 				diag::warn( "font '" + name + "' is not installed here; using the built-in face" );
 		}
 		else
-			chosen = OptionIndex( params[ PT_FONT ], static_cast< int >( fonts.size() ) + 1 ) - 1;
+		{
+			//A small value is a position from a composition saved by v0.2.0
+			//or earlier, and opens as it did there (FindFontByValue).
+			const long value = std::lround( params[ PT_FONT ] );
+			chosen           = FindFontByValue( params[ PT_FONT ] );
+			if( value > 0 && value < static_cast< long >( kPositionValues ) )
+				diag::info( "the Font list's value " + std::to_string( value ) +
+				            " is a place in the list, from an older composition; pick the font again to save it by name" );
+			else if( chosen < 0 && value != 0 )
+				diag::warn( "the Font list's value " + std::to_string( value ) + " is no font installed here; using the built-in face" );
+		}
 		if( chosen >= 0 && typeface.Load( fonts[ static_cast< size_t >( chosen ) ].path, fonts[ static_cast< size_t >( chosen ) ].collectionIndex ) )
 			loaded = true;
 		else
@@ -887,9 +899,9 @@ void JackpotPlugin::ResolveFont()
 	atlas          = typeface.Build();
 	resolvedFamily = atlas.family;
 	++atlasGeneration;
-	const int index = resolvedFamily.empty() ? 0 : FindFontByFamily( resolvedFamily ) + 1;
-	if( index > 0 || resolvedFamily.empty() )
-		params[ PT_FONT ] = static_cast< float >( std::max( index, 0 ) );
+	const int found = resolvedFamily.empty() ? -1 : FindFontByFamily( resolvedFamily );
+	if( found >= 0 || resolvedFamily.empty() )
+		params[ PT_FONT ] = FontValue( found );
 	{
 		std::lock_guard< std::mutex > lock( textMutex );
 		if( !( fromName && !name.empty() && resolvedFamily.empty() ) )

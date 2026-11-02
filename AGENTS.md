@@ -612,15 +612,24 @@ never stalling the pool and leaving the table flat; Spin Time and Land On; the c
 under the effect; fonts; the state between plays; Game and Play outside every group;
 wheel files (above), harness only.
 
-Known from another plugin: **only a TYPED Font Name reaches a composition.** Font
-Name wins over the Font index in jptest and when a composition restores both, but
-Arena keeps its own copy of every parameter, saves Font as the index and never
-reads back the Font Name the plugin fills in after a pick, and Resolume ignores
-`FF_EVENT_FLAG_VALUE` (afterglow's AGENTS.md, "Presets"), so raising one would
-change nothing. Seen in Knockout, which has polyhedral's design, in Arena 7.28.1
-on 2026-11-02: the saved `.avc` held `Font` = 55 and no Font Name. The README and
-guide say to type the name; don't claim more without watching a composition move
-between two machines.
+**The Font dropdown's element values are `FontValue`, not positions** (after
+v0.2.0). Arena saves an option as its element VALUE, keeps its own copy of every
+parameter and never reads back the Font Name the plugin fills in after a pick;
+Resolume ignores `FF_EVENT_FLAG_VALUE` (afterglow's AGENTS.md, "Presets"), so
+raising one would change nothing. With positions as values, as in v0.2.0, a picked
+family reopened elsewhere as whatever sat at that position: Knockout, which had
+polyhedral's design, saved `Font` = 55 and no Font Name (Arena 7.28.1, 2026-11-02).
+`FontValue` is Knockout's fix (its bb1e05b), ported as polyhedral has it: FNV-1a of
+the lowered family name folded to 24 bits so a float holds it exactly, 0 kept for
+Built-in, a taken value moving up one. Knockout's came back as the same family in
+Arena on a different font folder; this port is checked by `jptest --fonts` only.
+Saved compositions hold these values, so never change the arithmetic. Font Name
+still wins over the dropdown, in jptest and when a composition restores both.
+Values below `kPositionValues` (65536) are positions from compositions saved by
+v0.2.0 or earlier, read as those releases read them (clamped to the list) with an
+info line in the log; a name whose value lands there moves up by 65536, so the two
+never meet. Chosen 2026-11-02 so an old composition opens as it always has, not as
+the built-in face; a small number can't be told from a hash otherwise.
 
 Assumed or chosen, not measured:
 

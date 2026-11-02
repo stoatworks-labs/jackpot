@@ -521,6 +521,25 @@ std::vector< NamedParameter > listParameters( JackpotPlugin& plugin )
 	return list;
 }
 
+/// What a host sets an option to when its element `e` is chosen.
+float elementValue( JackpotPlugin& plugin, unsigned int index, unsigned int e )
+{
+	const FFMixed bits = plugin.GetParamElementDefault( index, e );
+	float value        = 0.0f;
+	std::memcpy( &value, &bits.UIntValue, sizeof value );
+	return value;
+}
+
+/// A number as --set and a cue sheet take it, as a host would send it: an
+/// option's number is its index, sent as that element's value.
+float hostValue( JackpotPlugin& plugin, unsigned int index, float number )
+{
+	if( plugin.GetParamType( index ) != FF_TYPE_OPTION )
+		return number;
+	const int count = static_cast< int >( plugin.GetNumParamElements( index ) );
+	return elementValue( plugin, index, static_cast< unsigned int >( OptionIndex( number, count ) ) );
+}
+
 bool applySetting( JackpotPlugin& plugin, const std::string& assignment, std::string& error )
 {
 	const size_t equals = assignment.find( '=' );
@@ -540,16 +559,22 @@ bool applySetting( JackpotPlugin& plugin, const std::string& assignment, std::st
 				return true;
 			}
 			float number = 0.0f;
-			if( !parseNumber( value, number ) && parameter.kind == "option" )
+			if( parameter.kind == "option" )
 			{
-				//An option by its name. Every option here takes its index as its
-				//value (SetParamElementInfo in Jackpot.cpp).
+				//An option by its name or its index, set to that element's value
+				//as a host sets it. Every option's values are its indices but
+				//Font's, which come from the family names (FontValue).
+				if( parseNumber( value, number ) )
+				{
+					plugin.SetFloatParameter( parameter.index, hostValue( plugin, parameter.index, number ) );
+					return true;
+				}
 				for( unsigned int e = 0; e < plugin.GetNumParamElements( parameter.index ); ++e )
 				{
 					const char* const element = plugin.GetParamElementName( parameter.index, e );
 					if( element != nullptr && value == element )
 					{
-						plugin.SetFloatParameter( parameter.index, static_cast< float >( e ) );
+						plugin.SetFloatParameter( parameter.index, elementValue( plugin, parameter.index, e ) );
 						return true;
 					}
 				}
@@ -640,7 +665,7 @@ int runPipe( bool effect, int width, int height, const std::string& scriptPath, 
 		}
 
 		for( const auto& track : automation )
-			rig.plugin.SetFloatParameter( track.first, valueAt( track.second, index ) );
+			rig.plugin.SetFloatParameter( track.first, hostValue( rig.plugin, track.first, valueAt( track.second, index ) ) );
 		if( std::find( plays.begin(), plays.end(), index ) != plays.end() )
 			rig.Press( PT_PLAY );
 		if( !rig.Render( 1 ) )
@@ -3437,6 +3462,86 @@ int runFonts( const Perturb& )
 	rig.plugin.SetTextParameter( PT_FONT_NAME, family.c_str() );
 	rig.Render( 1 );
 	Check( rig.plugin.FontFamily() == family, fmt( "Font Name '%s' loads it (%s)", family.c_str(), rig.plugin.FontFamily().c_str() ) );
+
+	//The list's element values are what a host saves for a picked family, so
+	//they must follow the name, not the position.
+	auto picked = [ & ]( float value ) {
+		Rig fresh;
+		if( !fresh.Init( 160, 90 ) )
+			return std::string( "!" );
+		fresh.Set( PT_FONT, value );
+		fresh.Render( 1 );
+		return fresh.plugin.FontFamily();
+	};
+	const int pick = FindFontByFamily( family );
+	Check( picked( FontValue( pick ) ) == family, fmt( "the dropdown at its value picks %s", family.c_str() ) );
+	{
+		const unsigned int count = rig.plugin.GetNumParamElements( PT_FONT );
+		bool own = count == fonts.size() + 1 && elementValue( rig.plugin, PT_FONT, 0 ) == 0.0f;
+		std::vector< std::string > names;
+		for( unsigned int e = 1; e < count && e <= fonts.size(); ++e )
+		{
+			const float value = elementValue( rig.plugin, PT_FONT, e );
+			own               = own && value == FontValue( static_cast< int >( e - 1 ) ) && FindFontByValue( value ) == static_cast< int >( e - 1 );
+			names.push_back( fonts[ e - 1 ].family );
+		}
+		Check( own, fmt( "Built-in's list value is 0, and each of the %zu families' is its FontValue and finds it again", fonts.size() ) );
+		//Every value under 2^24 is exact in a float; count the families whose
+		//name's value was taken, and that moved up.
+		const std::vector< uint32_t > values = FontValues( names );
+		std::set< uint32_t > distinct( values.begin(), values.end() );
+		int moved = 0, exact = 0;
+		for( size_t i = 0; i < values.size(); ++i )
+		{
+			moved += values[ i ] != FontValues( { names[ i ] } )[ 0 ];
+			exact += values[ i ] >= kPositionValues && values[ i ] < ( 1u << 24 ) && static_cast< uint32_t >( static_cast< float >( values[ i ] ) ) == values[ i ];
+		}
+		Check( exact == static_cast< int >( values.size() ) && distinct.size() == values.size(),
+		       fmt( "%zu list values, all from %u up (below is old compositions' positions), exact in a float and no two alike; %d moved up past a clash",
+		            values.size(), kPositionValues, moved ) );
+	}
+	const std::vector< uint32_t > alone = FontValues( { "Jackpot Twin" } );
+	const std::vector< uint32_t > third = FontValues( { "Aardvark", "Bodoni", "Jackpot Twin" } );
+	const std::vector< uint32_t > cased = FontValues( { "jackpot twin" } );
+	Check( alone[ 0 ] == third[ 2 ] && alone[ 0 ] == cased[ 0 ], fmt( "the same name, first or third or lower-case: %u, %u, %u", alone[ 0 ], third[ 2 ], cased[ 0 ] ) );
+	const std::vector< uint32_t > clash = FontValues( { "Twin", "twin", "TWIN" } );
+	Check( clash[ 1 ] == clash[ 0 ] + 1 && clash[ 2 ] == clash[ 0 ] + 2, fmt( "a value already taken moves up one: %u, %u, %u", clash[ 0 ], clash[ 1 ], clash[ 2 ] ) );
+	//The arithmetic against its own statement, and against the values Arena
+	//7.28.1 saved for Knockout's Didot and Copperplate (the same sum).
+	{
+		auto folded = []( const std::string& family ) {
+			uint32_t h = 2166136261u;
+			for( char c : family )
+				h = ( h ^ static_cast< unsigned char >( std::tolower( static_cast< unsigned char >( c ) ) ) ) * 16777619u;
+			return ( ( h >> 24 ) ^ h ) & 0xFFFFFFu;
+		};
+		std::vector< std::string > many;
+		for( int i = 0; i < 20000; ++i )
+			many.push_back( fmt( "Family %d", i ) );
+		const std::vector< uint32_t > values = FontValues( many );
+		int raised = 0, rule = 0;
+		for( const std::string& made : many )
+		{
+			const uint32_t raw = folded( made ), single = FontValues( { made } )[ 0 ];
+			raised += raw < kPositionValues ? 1 : 0;
+			rule += single == ( raw < kPositionValues ? raw + kPositionValues : raw ) ? 1 : 0;
+		}
+		const std::set< uint32_t > distinct( values.begin(), values.end() );
+		const bool above = std::all_of( values.begin(), values.end(), []( uint32_t v ) { return v >= kPositionValues && v < ( 1u << 24 ); } );
+		Check( rule == 20000 && raised > 0 && above && distinct.size() == values.size(),
+		       fmt( "20000 made-up names: each value the folded FNV-1a, the %d that fell among the positions raised past them, no two alike", raised ) );
+		Check( FontValues( { "Didot" } )[ 0 ] == 3837474u && FontValues( { "Copperplate" } )[ 0 ] == 10916275u,
+		       "Didot and Copperplate get the values Arena 7.28.1 saved for them in Knockout (3837474, 10916275)" );
+	}
+	const std::string elsewhere = picked( static_cast< float >( FontValues( { "Aardvark", "Bodoni", family } )[ 2 ] ) );
+	Check( elsewhere == family, fmt( "a list value saved on a machine with %s listed third picks it here (got '%s')", family.c_str(), elsewhere.c_str() ) );
+	const float missing = static_cast< float >( FontValues( { "No Such Typeface" } )[ 0 ] );
+	Check( FindFontByValue( missing ) < 0 && picked( missing ).empty(), "a list value from a machine with a family this one lacks: the built-in face" );
+	const std::string old = picked( static_cast< float >( pick + 1 ) );
+	Check( old == family, fmt( "a v0.2.0 composition's position, %d, still picks %s here, as v0.2.0 read it", pick + 1, family.c_str() ) );
+	const std::string past = picked( static_cast< float >( fonts.size() + 5 ) );
+	Check( past == fonts.back().family, fmt( "a position past the end of the list is its last font, %s, as v0.2.0 clamped it", fonts.back().family.c_str() ) );
+
 	rig.plugin.SetTextParameter( PT_FONT_NAME, "No Such Typeface" );
 	rig.Render( 1 );
 	Check( rig.plugin.FontFamily().empty(), "a Font Name not installed here falls back to the built-in face" );

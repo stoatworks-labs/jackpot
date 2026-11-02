@@ -79,7 +79,7 @@
         const count = core._jp_param_element_count(instance, index);
         const e = [...Array(count).keys()].find((k) => text(core._jp_param_element_name(instance, index, k)) === v);
         if (e === undefined) throw new Error(`'${v}' is not one of ${name}'s options`);
-        number = e;
+        number = core._jp_param_element_value(instance, index, e);
       }
       core._jp_set_float(instance, index, Math.fround(number));
     }
