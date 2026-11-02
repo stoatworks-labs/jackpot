@@ -269,7 +269,7 @@ const HINTS = {
   Display: 'The slot machine’s banner and the other games’ result board, once the play is at rest.',
   Font: 'Built-in, then every font installed on the machine. A web page cannot list this computer’s fonts, and the plugin’s own scan finds none in the page’s memory, so the list here is Built-in alone.',
   'Font File': 'A .ttf, .otf, .ttc or .otc you pick, written into the page’s memory and loaded by the plugin’s own font loader. It wins over Font and Font Name.',
-  'Font Name': 'The family, as text: it travels with a composition, and wins over Font. With no installed fonts here, any name falls back to the built-in face — the plugin’s own path for a composition opened on a machine without its font. Sent on Enter.',
+  'Font Name': 'The family, as text, which wins over Font. Typed in, it travels with a composition; a family picked from Font is saved by Arena as its place in the list. With no installed fonts here, any name falls back to the built-in face — the plugin’s own path for a composition opened on a machine without its font. Sent on Enter.',
   'Light Angle': 'Where the key light stands, −180° to 180°. Roulette, craps, the lottery and the shower only.',
   Tilt: 'The camera’s elevation, 20° to straight down; the lottery is seen 35° lower. Roulette, craps, the lottery and the shower only.',
   Zoom: 'Framing, 0.5 (wide) to 2.5 (close), geometric.',

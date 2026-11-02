@@ -612,6 +612,16 @@ never stalling the pool and leaving the table flat; Spin Time and Land On; the c
 under the effect; fonts; the state between plays; Game and Play outside every group;
 wheel files (above), harness only.
 
+Known from another plugin: **only a TYPED Font Name reaches a composition.** Font
+Name wins over the Font index in jptest and when a composition restores both, but
+Arena keeps its own copy of every parameter, saves Font as the index and never
+reads back the Font Name the plugin fills in after a pick, and Resolume ignores
+`FF_EVENT_FLAG_VALUE` (afterglow's AGENTS.md, "Presets"), so raising one would
+change nothing. Seen in Knockout, which has polyhedral's design, in Arena 7.28.1
+on 2026-11-02: the saved `.avc` held `Font` = 55 and no Font Name. The README and
+guide say to type the name; don't claim more without watching a composition move
+between two machines.
+
 Assumed or chosen, not measured:
 
 - Every physical constant: the roulette profile (track 14°, stator 20°), its

@@ -862,8 +862,11 @@ void JackpotPlugin::ResolveFont()
 		loaded = true;
 	else
 	{
-		//The dropdown stores an INDEX into this machine's font list; Font Name
-		//stores the family, and wins when a composition restores both.
+		//The dropdown stores an INDEX into this machine's font list; a name set
+		//in Font Name wins over it, here and when a composition restores both.
+		//Arena saves only a TYPED name: it never reads back the one written
+		//below, so a picked family is saved as its index alone (seen in
+		//Knockout, Arena 7.28.1).
 		int chosen = -1;
 		if( nameSet )
 		{

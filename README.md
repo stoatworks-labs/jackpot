@@ -228,9 +228,14 @@ line, chosen with **Wheel File**.
   Zoom.
 - **Over only:** Mix.
 
-**Fonts travel by name**, as in polyhedral: the dropdown stores an index into
-*this* machine's list, Font Name keeps the family, and the name wins when a
-composition restores both.
+**Type the font's name if the composition is going anywhere.** Arena saves a
+family picked from the Font dropdown as its position in *this* machine's list,
+which is a different font on the next rig. The plugin writes the family into Font
+Name when you pick, but Arena keeps its own copy of every control and never reads
+that back, so the saved composition holds the position and no name at all. A name
+you type into Font Name is saved as the name, and it wins over the list when the
+composition opens; once you've typed one, change font by typing another.
+Polyhedral works the same way, trap included.
 
 ## Status
 
@@ -334,6 +339,10 @@ What **isn't** verified yet:
   (whether `barPhase` is a usable downbeat hasn't been measured anywhere in the
   fleet, and Land On trusts it), the order Arena restores parameters in from a saved
   composition, or any GPU but mine.
+- **A picked font is saved as a list position, not a name.** That was found with
+  Knockout, which does fonts the same way, saved and reopened in Arena 7.28.1 on a
+  Mac. Jackpot hasn't been through that test itself, but Arena treats every
+  plugin's controls the same way. Type the name (see Controls above).
 - **The physics is my own, checked but not fitted.** The roulette ball is a point
   carrying its radius on a profile of cones, with one friction for each surface;
   the clapper is a spring that straightens at a third of its stiffness; the
